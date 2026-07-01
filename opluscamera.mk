@@ -47,6 +47,7 @@ PRODUCT_PRODUCT_PROPERTIES += \
 
 # Photo
 $(call soong_config_set,camera,package_name,com.oplus.packageName)
+$(call soong_config_set,camera,allow_nonincreasing_timestamps,true)
 
 # Video
 $(call soong_config_set_bool,camera,override_format_from_reserved,true)
