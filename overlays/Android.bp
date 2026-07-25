@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Prebuilt RROs from dodge stock. Kept outside extract-utils-generated
+// Android.bp so `extract-files.py -m` cannot wipe them, and so they are not
+// shipped via PRODUCT_COPY_FILES (Make forbids .apk there).
+// Sources must live under this directory — Soong rejects ../ paths.
+
+prebuilt_overlay {
+    name: "aon.frameworkres.overlay.product",
+    owner: "oplus",
+    src: "aon.frameworkres.overlay.product.apk",
+    filename_from_src: true,
+    product_specific: true,
+}
+
+prebuilt_overlay {
+    name: "OplusAiConfigOverlayCommon",
+    owner: "oplus",
+    src: "OplusAiConfigOverlayCommon/OplusAiConfigOverlayCommon.apk",
+    filename_from_src: true,
+    sub_dir: "OplusAiConfigOverlayCommon",
+    product_specific: true,
+}
+
+
+prebuilt_overlay {
+    name: "OplusCameraBigBallConfigOverlay",
+    owner: "oplus",
+    src: "OplusCameraBigBallConfigOverlay/OplusCameraBigBallConfigOverlay.apk",
+    filename_from_src: true,
+    sub_dir: "OplusCameraBigBallConfigOverlay",
+    product_specific: true,
+}

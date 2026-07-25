@@ -53,7 +53,7 @@ $(call soong_config_set,camera,allow_nonincreasing_timestamps,true)
 $(call soong_config_set_bool,camera,override_format_from_reserved,true)
 
 
-# AI / camera RRO overlays (prebuilt_overlay in camera/overlays/Android.bp)
+# AI / camera RRO overlays (prebuilt_overlay in overlays/Android.bp)
 PRODUCT_PACKAGES += \
     aon.frameworkres.overlay.product \
     OplusAiConfigOverlayCommon \
