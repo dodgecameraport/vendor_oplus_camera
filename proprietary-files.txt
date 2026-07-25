@@ -292,3 +292,31 @@ system_ext/lib64/libcsextimpl.so
 
 # Oplus Camera Services & AI (OSense)
 vendor/lib64/vendor.oplus.hardware.cammidasservice@1.0.so
+
+# AI camera stack (from dodge_imgs OOS16) — CAMERA ONLY
+# Lifestyle AI removed (AIMemory/AIWriter/aiassistant/OBrain/AICore/DeepThinker/aisubsystem).
+# Dropped: AIUnit libdmabufheap.so (corrupt ELF); use platform libdmabufheap
+# AIUnit — on-device AI engine for Camera/Gallery (com.oplus.aiunit)
+my_stock/priv-app/AIUnit/AIUnit.apk:system_ext/priv-app/AIUnit/AIUnit.apk
+my_stock/priv-app/AIUnit/lib/arm64/libaiunit_framework.so:system_ext/lib64/libaiunit_framework.so;MODULE_SUFFIX=_aiunit;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AIUnit/lib/arm64/libaiunit_framework.so
+my_stock/priv-app/AIUnit/lib/arm64/libaiunit_framework_jni.so:system_ext/lib64/libaiunit_framework_jni.so;MODULE_SUFFIX=_aiunit;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AIUnit/lib/arm64/libaiunit_framework_jni.so
+my_stock/priv-app/AIUnit/lib/arm64/libaiunit_sdk_core.so:system_ext/lib64/libaiunit_sdk_core.so;MODULE_SUFFIX=_aiunit;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AIUnit/lib/arm64/libaiunit_sdk_core.so
+my_stock/priv-app/AIUnit/lib/arm64/libcore_tokenizers.so:system_ext/lib64/libcore_tokenizers.so;MODULE_SUFFIX=_aiunit;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AIUnit/lib/arm64/libcore_tokenizers.so
+my_stock/priv-app/AIUnit/lib/arm64/libdatastore_shared_counter.so:system_ext/lib64/libdatastore_shared_counter.so;MODULE_SUFFIX=_aiunit;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AIUnit/lib/arm64/libdatastore_shared_counter.so
+my_stock/priv-app/AIUnit/lib/arm64/libopencv_java4.so:system_ext/lib64/libopencv_java4.so;MODULE_SUFFIX=_aiunit;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AIUnit/lib/arm64/libopencv_java4.so
+my_stock/priv-app/AIUnit/lib/arm64/libc++_shared.so:system_ext/lib64/libc++_shared.so;MODULE_SUFFIX=_aiunit;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AIUnit/lib/arm64/libc++_shared.so
+# AONService — always-on camera AI (com.aiunit.aon)
+my_product/app/AONService/AONService.apk:system_ext/priv-app/AONService/AONService.apk
+my_product/app/AONService/lib/arm64/libNoTopK.so:system_ext/lib64/libNoTopK.so;MODULE_SUFFIX=_aon;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AONService/lib/arm64/libNoTopK.so
+my_product/app/AONService/lib/arm64/libPOSTPROCESS.so:system_ext/lib64/libPOSTPROCESS.so;MODULE_SUFFIX=_aon;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AONService/lib/arm64/libPOSTPROCESS.so
+my_product/app/AONService/lib/arm64/libROTATE90PAD.so:system_ext/lib64/libROTATE90PAD.so;MODULE_SUFFIX=_aon;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AONService/lib/arm64/libROTATE90PAD.so
+my_product/app/AONService/lib/arm64/libaiboost_jni.so:system_ext/lib64/libaiboost_jni.so;MODULE_SUFFIX=_aon;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AONService/lib/arm64/libaiboost_jni.so
+my_product/app/AONService/lib/arm64/libbitmapUtil.so:system_ext/lib64/libbitmapUtil.so;MODULE_SUFFIX=_aon;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AONService/lib/arm64/libbitmapUtil.so
+my_product/app/AONService/lib/arm64/libfde.so:system_ext/lib64/libfde.so;MODULE_SUFFIX=_aon;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AONService/lib/arm64/libfde.so
+my_product/app/AONService/lib/arm64/libmemoryhelper.so:system_ext/lib64/libmemoryhelper.so;MODULE_SUFFIX=_aon;DISABLE_DEPS;SYMLINK=system_ext/priv-app/AONService/lib/arm64/libmemoryhelper.so
+my_product/etc/permissions/oplus_aon_grant_permissions_list.xml:system_ext/etc/default-permissions/oplus_aon_grant_permissions_list.xml
+# Gallery AI companions
+system_ext/priv-app/StdID/StdID.apk
+my_stock/priv-app/VideoGallery/VideoGallery.apk:system_ext/priv-app/VideoGallery/VideoGallery.apk
+system/framework/oplus-services.jar;EXTRACT_ONLY
+# Camera AI feature overlays packaged via camera/overlays/Android.bp (not listed here)

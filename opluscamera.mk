@@ -52,6 +52,13 @@ $(call soong_config_set,camera,allow_nonincreasing_timestamps,true)
 # Video
 $(call soong_config_set_bool,camera,override_format_from_reserved,true)
 
+
+# AI / camera RRO overlays (prebuilt_overlay in camera/overlays/Android.bp)
+PRODUCT_PACKAGES += \
+    aon.frameworkres.overlay.product \
+    OplusAiConfigOverlayCommon \
+    OplusCameraBigBallConfigOverlay
+
 # SEpolicy
 include vendor/oplus/camera/sepolicy/SEPolicy.mk
 

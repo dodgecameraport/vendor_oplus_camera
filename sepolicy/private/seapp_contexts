@@ -1,2 +1,7 @@
 # Camera
 user=_app seinfo=platform name=com.oplus.camera domain=opluscamera_app type=opluscamera_app_data_file levelFrom=all
+
+# AI camera stack — platform-signed → platform_app (plugin .so exec grant already present)
+# Explicit entries reserved if we later need dedicated domains:
+# user=_app seinfo=platform name=com.oplus.aiunit domain=platform_app type=app_data_file levelFrom=all
+# user=_app seinfo=platform name=com.aiunit.aon domain=platform_app type=app_data_file levelFrom=all

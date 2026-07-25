@@ -1,2 +1,4 @@
-
 camera/*
+!camera/overlays/
+!camera/overlays/**
+__pycache__/
