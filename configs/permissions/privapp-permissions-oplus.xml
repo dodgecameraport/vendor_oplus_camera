@@ -63,6 +63,7 @@
     <privapp-permissions package="com.oplus.aiunit">
         <permission name="android.permission.INTERACT_ACROSS_USERS"/>
         <permission name="android.permission.WRITE_SECURE_SETTINGS"/>
+        <permission name="android.permission.WRITE_SETTINGS"/>
         <permission name="android.permission.SYSTEM_ALERT_WINDOW"/>
         <permission name="android.permission.FOREGROUND_SERVICE"/>
         <permission name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>

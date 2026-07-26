@@ -442,6 +442,92 @@ def blob_fixup_aiunit_disable_settings(ctx, file, file_path, *args, tmp_dir=None
     target.write_bytes(new.pack())
 
 
+def blob_fixup_aon_disable_ezpay_settings(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
+    """Keep AON camera AI; strip EZ Pay Settings injection (Intelligent Perception)."""
+    if tmp_dir is None:
+        return
+    try:
+        import pyaxml
+    except ImportError:
+        return
+
+    candidates = [
+        Path(tmp_dir) / 'AndroidManifest.xml',
+        Path(tmp_dir) / 'original' / 'AndroidManifest.xml',
+    ]
+    target = None
+    for c in candidates:
+        if c.exists() and c.stat().st_size > 0:
+            head = c.read_bytes()[:4]
+            if head[:2] == b'\x03\x00' or head == b'\x03\x00\x08\x00' or head[0] != ord('<'):
+                target = c
+                break
+    if target is None:
+        manifest = Path(tmp_dir) / 'AndroidManifest.xml'
+        if manifest.exists() and manifest.read_text(encoding='utf-8', errors='ignore').lstrip().startswith('<'):
+            data = manifest.read_text(encoding='utf-8')
+            # Drop Settings injection action; keep AON runtime.
+            data = data.replace(
+                '<action android:name="com.android.settings.MANUFACTURER_APPLICATION_SETTING"/>',
+                '',
+            )
+            data = re.sub(
+                r'<provider\b[^>]*IntelligentSearchIndexablesProvider[\s\S]*?</provider>',
+                '',
+                data,
+                count=1,
+            )
+            manifest.write_text(data, encoding='utf-8')
+        return
+
+    axml = pyaxml.AXML.from_axml(target.read_bytes())
+    root = axml.to_xml()
+    NS = '{http://schemas.android.com/apk/res/android}'
+
+    def get_a(el, name):
+        for k, v in el.attrib.items():
+            if k == name or k.endswith('}' + name) or k.endswith(':' + name):
+                return v
+        return None
+
+    def set_a(el, name, value):
+        for k in list(el.attrib):
+            if k == name or k.endswith('}' + name) or k.endswith(':' + name):
+                el.attrib[k] = value
+                return
+        el.attrib[NS + name] = value
+
+    app = next(e for e in root.iter() if e.tag.split('}')[-1] == 'application')
+    for prov in list(app):
+        if prov.tag.split('}')[-1] != 'provider':
+            continue
+        name = get_a(prov, 'name') or ''
+        if 'IntelligentSearchIndexablesProvider' in name:
+            app.remove(prov)
+    for act in [e for e in app if e.tag.split('}')[-1] == 'activity']:
+        name = get_a(act, 'name') or ''
+        if 'IntelligentPerceptionActivity' not in name:
+            continue
+        set_a(act, 'exported', 'false')
+        for child in list(act):
+            tag = child.tag.split('}')[-1]
+            if tag == 'intent-filter':
+                blob = ' '.join(
+                    filter(None, (get_a(sub, 'name') for sub in child.iter()))
+                )
+                if 'MANUFACTURER_APPLICATION_SETTING' in blob:
+                    act.remove(child)
+            elif tag == 'meta-data':
+                mname = get_a(child, 'name') or ''
+                if mname.startswith('com.android.settings.') or mname.startswith(
+                    'com.oplus.settings.'
+                ):
+                    act.remove(child)
+    new = pyaxml.AXML()
+    new.from_xml(root)
+    target.write_bytes(new.pack())
+
+
 blob_fixups: blob_fixups_user_type = {
     'system_ext/priv-app/OplusCamera/OplusCamera.apk': blob_fixup()
         .apktool_patch('patches'),
@@ -455,6 +541,11 @@ blob_fixups: blob_fixups_user_type = {
         .call(blob_fixup_aiunit_baseos_empty)
         .call(blob_fixup_aiunit_authorize_camera)
         .call(blob_fixup_aiunit_plugin_so_permissions)
+        .apktool_pack()
+        .stripzip(),
+    'system_ext/priv-app/AONService/AONService.apk': blob_fixup()
+        .call(blob_fixup_apktool_unpack_src)
+        .call(blob_fixup_aon_disable_ezpay_settings)
         .apktool_pack()
         .stripzip(),
     'system_ext/priv-app/StdID/StdID.apk': blob_fixup()
