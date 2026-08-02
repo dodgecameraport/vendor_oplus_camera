@@ -5,7 +5,10 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
+import json
 import re
+import shutil
+import zipfile
 from pathlib import Path
 
 from extract_utils.fixups_lib import (
@@ -248,6 +251,88 @@ def blob_fixup_aiunit_plugin_so_permissions(ctx, file, file_path, *args, tmp_dir
     fixed = data.replace(old, new, 1)
     if fixed != data:
         smali.write_text(fixed, encoding='utf-8')
+
+
+# <kind>-<unitName>-<unitId>-<unitVersion>[-<variant>][.apk]
+AIUNIT_PACK_RE = re.compile(
+    r'^(?P<kind>plugin|engine|detector|oaa|oap)-'
+    r'(?P<name>.+?)-(?P<id>\d+)-(?P<ver>\d+)(?:-.*?)?(?:\.apk)?$'
+)
+
+
+def blob_fixup_aiunit_preinstall_packs(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
+    # Ship the Gallery AI edit plugins inside AIUnit's own assets so they are
+    # preinstalled offline instead of being fetched from the CDN at first use.
+    #
+    # AIUnit has several unit load strategies. The OS ones (BaseOSLoadStrategy,
+    # OsLegacy/OsOap2) read the stock my_product/etc/aisubsystem preload dir via
+    # com.oplus.cust.OplusCfgFilePolicy, which does not exist off OOS -- that is
+    # exactly what blob_fixup_aiunit_baseos_empty stubs out. ApkAssetsLoadStrategy
+    # is the only one left working, and it is already how the bundled OCR engines
+    # and image_scan_code get installed, so we ride that path.
+    #
+    # A pack is only picked up if it is also listed in unit_config_list.json, so
+    # copying the APK is not enough -- register/refresh the entry too.
+    if tmp_dir is None:
+        return
+
+    packs_root = Path(__file__).parent / 'aiunit-packs'
+    if not packs_root.is_dir():
+        return
+
+    assets = Path(tmp_dir) / 'assets'
+    unit_config = assets / 'unit_config_list.json'
+    if not unit_config.exists():
+        return
+
+    units = json.loads(unit_config.read_text(encoding='utf-8'))
+    by_id = {u.get('unitId'): u for u in units if isinstance(u, dict)}
+
+    # Plugin/, Engine/, Detector/ -- mirrors the layout AIUnit already ships.
+    for kind_dir in sorted(p for p in packs_root.iterdir() if p.is_dir()):
+        dest = assets / kind_dir.name
+        dest.mkdir(parents=True, exist_ok=True)
+
+        for pack in sorted(kind_dir.iterdir()):
+            match = AIUNIT_PACK_RE.match(pack.name)
+            if match is None:
+                continue
+
+            shutil.copy2(pack, dest / pack.name)
+
+            unit_id = int(match.group('id'))
+            unit = by_id.get(unit_id)
+            if unit is None:
+                # Engines are referenced by id from the detector manifests and
+                # are not listed individually, so only plugins need an entry
+                # invented for them.
+                if match.group('kind') != 'plugin':
+                    continue
+                unit = {
+                    'unitName': match.group('name'),
+                    'unitId': unit_id,
+                    'unitType': 'Plugin',
+                }
+                units.append(unit)
+                by_id[unit_id] = unit
+
+            # Keep the declared version in sync with the pack we actually ship,
+            # and make sure nothing we bundle is left switched off.
+            unit['unitVersion'] = int(match.group('ver'))
+            unit['disabled'] = False
+
+            # The stock list can name engines from an older revision of a
+            # detector -- image_interactive_seg_qcom v1 wants 235929687 while
+            # the v2 pack wants 235929684. Trust the pack we actually ship, or
+            # AIUnit resolves a dependency that is not there.
+            if match.group('kind') == 'detector':
+                with zipfile.ZipFile(pack) as z:
+                    manifest = json.loads(z.read('manifest.json'))
+                for key in ('engines', 'optEngines'):
+                    if key in manifest:
+                        unit[key] = manifest[key]
+
+    unit_config.write_text(json.dumps(units, indent=2), encoding='utf-8')
 
 
 def blob_fixup_stdid_receiver_flags(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
@@ -541,6 +626,7 @@ blob_fixups: blob_fixups_user_type = {
         .call(blob_fixup_aiunit_baseos_empty)
         .call(blob_fixup_aiunit_authorize_camera)
         .call(blob_fixup_aiunit_plugin_so_permissions)
+        .call(blob_fixup_aiunit_preinstall_packs)
         .apktool_pack()
         .stripzip(),
     'system_ext/priv-app/AONService/AONService.apk': blob_fixup()
