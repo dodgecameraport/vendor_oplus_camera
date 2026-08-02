@@ -321,6 +321,13 @@ def blob_fixup_aiunit_preinstall_packs(ctx, file, file_path, *args, tmp_dir=None
             unit['unitVersion'] = int(match.group('ver'))
             unit['disabled'] = False
 
+            # preinstallWithUnit is what decides whether a unit is installed
+            # from assets: on device the only units that landed were the ones
+            # carrying it, and their engines came along as dependencies.
+            # Without it the pack ships inside the APK and is never unpacked.
+            unit['preinstall'] = True
+            unit['preinstallWithUnit'] = True
+
             # The stock list can name engines from an older revision of a
             # detector -- image_interactive_seg_qcom v1 wants 235929687 while
             # the v2 pack wants 235929684. Trust the pack we actually ship, or
@@ -333,6 +340,99 @@ def blob_fixup_aiunit_preinstall_packs(ctx, file, file_path, *args, tmp_dir=None
                         unit[key] = manifest[key]
 
     unit_config.write_text(json.dumps(units, indent=2), encoding='utf-8')
+
+
+# ConfigAbilityWrapper flags that gate the AI entries in the Gallery editor.
+# 0005 already forces the olive* ones for Live Photo; these are the rest.
+GALLERY_AI_FEATURE_FLAGS = (
+    'feature_is_support_ipu_beauty',
+    'feature_is_support_beauty_entrance',
+    'feature_is_support_ipu_filter',
+    'feature_is_support_ai_deblur',
+    'feature_is_support_rm_ai_deblur',
+    'feature_is_support_ai_dereflection',
+    'feature_is_support_ai_eliminate',
+    'feature_is_support_eliminate_pen',
+    'feature_is_support_ai_composition',
+    'feature_is_support_ai_lighting',
+    'feature_is_support_ai_face_hd',
+    'feature_is_support_ai_id_photo',
+    'feature_is_support_ai_best_take',
+    'feature_is_support_ai_matting',
+    'feature_is_support_ai_graffiti',
+    'feature_is_support_ai_deglare',
+    'feature_is_support_plugin_available',
+    'feature_is_support_show_ai_logo',
+    'feature_is_support_deblur_recommend',
+    'feature_is_support_dereflection_recommend',
+    'feature_is_support_ai_best_take_recommend',
+    'feature_is_support_ai_lighting_recommend',
+)
+
+# Deliberately NOT forced: feature_is_support_ai_defog. Defog reaches the ODM
+# APS/libAlgoProcess path, which segfaults in doIPUArcDeHazyProcess -- showing
+# the entry just hands the user a crash.
+
+GALLERY_OLIVE_ANCHOR = '    :goto_olive_check_done\n'
+
+
+def blob_fixup_gallery_force_ai_flags(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
+    # Gallery hides its AI tools behind ConfigAbilityWrapper feature flags,
+    # resolved through the ColorOS AppFeature config provider. Off OOS that
+    # provider does not exist, every feature_is_support_* lookup returns false
+    # and the editor entries never appear -- which is why the AI menu is empty
+    # even with AIUnit healthy and its packs installed.
+    #
+    # Same trick 0005 uses for Live Photo, extended to the rest of the suite.
+    if tmp_dir is None:
+        return
+
+    # The class name is obfuscated and moves between blobs (c25 -> e26 so far),
+    # so find the file by the anchor 0005 leaves behind rather than by name.
+    root = Path(tmp_dir)
+    smali = None
+    for candidate in sorted(root.glob('smali_classes*/com/oplus/**/*.smali')):
+        if GALLERY_OLIVE_ANCHOR in candidate.read_text(encoding='utf-8'):
+            smali = candidate
+            break
+    if smali is None:
+        return
+
+    data = smali.read_text(encoding='utf-8')
+    if 'cond_force_ai_true' in data:
+        return
+
+    chain = ''
+    for flag in GALLERY_AI_FEATURE_FLAGS:
+        chain += (
+            f'    const-string v0, "{flag}"\n'
+            '\n'
+            '    invoke-virtual {v0, p0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z\n'
+            '\n'
+            '    move-result v1\n'
+            '\n'
+            '    if-nez v1, :cond_force_ai_true\n'
+            '\n'
+        )
+
+    # Reuses v0/v1 exactly as 0005 does, so the method's .locals still covers it.
+    inject = (
+        chain
+        + '    goto :goto_force_ai_done\n'
+        '\n'
+        '    :cond_force_ai_true\n'
+        '    const/4 v0, 0x1\n'
+        '\n'
+        '    return v0\n'
+        '\n'
+        '    :goto_force_ai_done\n'
+        '\n'
+    )
+
+    smali.write_text(
+        data.replace(GALLERY_OLIVE_ANCHOR, GALLERY_OLIVE_ANCHOR + '\n' + inject, 1),
+        encoding='utf-8',
+    )
 
 
 def blob_fixup_stdid_receiver_flags(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
@@ -618,8 +718,14 @@ blob_fixups: blob_fixups_user_type = {
         .apktool_patch('patches'),
     'system_ext/framework/com.oplus.camera.unit.sdk.jar': blob_fixup()
         .apktool_patch('patches-sdk'),
+    # apktool_patch() expanded so the AI feature flags can be forced after the
+    # patches land but before the APK is packed back up.
     'system_ext/priv-app/OppoGallery2/OppoGallery2.apk': blob_fixup()
-        .apktool_patch('patches-gallery'),
+        .apktool_unpack('patches-gallery')
+        .patch_dir('patches-gallery')
+        .call(blob_fixup_gallery_force_ai_flags)
+        .apktool_pack()
+        .stripzip(),
     'system_ext/priv-app/AIUnit/AIUnit.apk': blob_fixup()
         .call(blob_fixup_apktool_unpack_src)
         .call(blob_fixup_aiunit_disable_settings)
