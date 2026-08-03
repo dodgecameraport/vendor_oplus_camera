@@ -367,6 +367,13 @@ GALLERY_AI_FEATURE_FLAGS = (
     'feature_is_support_dereflection_recommend',
     'feature_is_support_ai_best_take_recommend',
     'feature_is_support_ai_lighting_recommend',
+    # Not a feature_is_support_* entry: AIUnitPrivacyInterceptor resolves this
+    # through the same ConfigAbility lookup, and off OOS it defaults false. Every
+    # AI apply then fails with error 10109 the moment it runs, even though the
+    # tool is visible and AIUnit is healthy. Forcing it here is what the
+    # hand-patched, pm-installed Gallery was doing on the test device; this puts
+    # the same fix in the build so it survives a flash.
+    'is_agree_ai_unit_privacy',
 )
 
 # Deliberately NOT forced: feature_is_support_ai_defog. Defog reaches the ODM

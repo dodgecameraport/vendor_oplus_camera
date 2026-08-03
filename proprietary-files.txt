@@ -318,5 +318,12 @@ my_product/etc/permissions/oplus_aon_grant_permissions_list.xml:system_ext/etc/d
 # Gallery AI companions
 system_ext/priv-app/StdID/StdID.apk
 my_stock/priv-app/VideoGallery/VideoGallery.apk:system_ext/priv-app/VideoGallery/VideoGallery.apk
+# OpenCapabilityService (com.coloros.ocs.opencapabilityservice) — the capability
+# provider the AI plugins query while assembling a cloud request. Missing it does
+# not fail loudly; the capability lookups just come back empty.
+my_stock/app/OpenCapabilityService/OpenCapabilityService.apk:system_ext/app/OpenCapabilityService/OpenCapabilityService.apk
+# FileEncryption (com.oplus.encryption) — hosts com.oplus.encyptionserver, bound
+# during upload preparation for the cloud AI tools.
+my_stock/app/FileEncryption/FileEncryption.apk:system_ext/app/FileEncryption/FileEncryption.apk
 system/framework/oplus-services.jar;EXTRACT_ONLY
 # Camera AI feature overlays packaged via overlays/Android.bp (not listed here)
