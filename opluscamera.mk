@@ -16,6 +16,26 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/configs/permissions/privapp-permissions-oplus.xml:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/permissions/privapp-permissions-oplus.xml \
     $(LOCAL_PATH)/configs/sysconfig/hiddenapi-package-oplus-whitelist.xml:$(TARGET_COPY_OUT_SYSTEM)/etc/sysconfig/hiddenapi-package-oplus-whitelist.xml
 
+# ColorOS version identity.
+#
+# oplus.api is load-bearing, not cosmetic: OplusBuild.getOplusOSVERSION() reads it
+# and AIUnit's UnitConfig.isWhiteConditionsMatch() requires that value to be >=
+# each unit's minColorApi. The Gallery AI units declare 30. Without this the
+# legacy VERSIONS table walk caps out at 24, every unit reports support:false and
+# Gallery fails with "unit config not found" the moment a tool is used.
+#
+# The oplusrom trio is what the Odin cloud endpoints read as device identity;
+# empty values there make the AI inference API reject requests with 3000404
+# (请求头缺失 / "request header missing"). These were previously being set at
+# runtime by a KernelSU service script -- they belong in the build.
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.build.version.oplus.api=38 \
+    ro.build.version.oplus.sub_api=48 \
+    ro.build.version.oplusrom=V16.1.0 \
+    ro.build.version.oplusrom.display=16.0.9 \
+    ro.build.version.oplusrom.confidential=V16.1.0 \
+    ro.build.version.ota=CPH2655_11.F.92_2920_202607071721
+
 # Properties
 PRODUCT_PRODUCT_PROPERTIES += \
     persist.vendor.camera.privapp.list=com.oplus.camera \

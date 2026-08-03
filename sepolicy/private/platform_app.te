@@ -1,0 +1,58 @@
+# Gallery's "Retouch" is not an AIUnit unit at all -- it is Gallery's own
+# RemoteModelInfoManager pulling a BeautySource model zip straight off a CDN
+# (videoclipfsg-*.coloros.com) into files/component/BeautySource/, which contains
+# liboplus_image_process.so, libarcsoft_beauty_ex.so and libmpbase.so.
+#
+# Gallery then dlopen()s those. They land in app_data_file, and the W^X
+# neverallows forbid executing from there, so without a dedicated type the tool
+# fails with "Beauty so file not download yet. Can't detect face."
+#
+# The type_transition makes the "component" directory get the new label the
+# moment Gallery creates it, so this works for a fresh download as well as for a
+# preinstalled copy.
+allow platform_app oplus_gallery_data_file:dir create_dir_perms;
+allow platform_app oplus_gallery_data_file:file { create_file_perms execute };
+type_transition platform_app app_data_file:dir oplus_gallery_data_file "component";
+
+# AIUnit (also platform_app) downloads its engines and cloud plugins as .so files
+# into files/{Engine,Plugin,OAA} and dlopen()s them from there. Same W^X problem as
+# BeautySource above: they land in app_data_file, which cannot be executed, and
+# "allow platform_app app_data_file:file execute" is refused by neverallow -- so
+# they need a type of their own rather than a broadened rule.
+#
+# Without this the engines fail to load with
+#   dlopen failed: couldn't map ... Permission denied
+# and the tools that depend on them (AI Eraser, the local preprocess step of every
+# cloud tool) fall over. Detector and OAP hold models rather than libraries today,
+# but they are labelled too so a future unit that ships a .so is covered.
+#
+# NOTE: the type_transitions key off directory *name* within platform_app, so any
+# platform_app that creates a directory called Engine/Plugin/Detector/OAA/OAP gets
+# this label. That is the same trade-off the "component" transition above already
+# makes, and it stays inside the platform_app domain.
+allow platform_app oplus_aiunit_data_file:dir create_dir_perms;
+allow platform_app oplus_aiunit_data_file:file { create_file_perms execute };
+type_transition platform_app app_data_file:dir oplus_aiunit_data_file "Engine";
+type_transition platform_app app_data_file:dir oplus_aiunit_data_file "Plugin";
+type_transition platform_app app_data_file:dir oplus_aiunit_data_file "Detector";
+type_transition platform_app app_data_file:dir oplus_aiunit_data_file "OAA";
+type_transition platform_app app_data_file:dir oplus_aiunit_data_file "OAP";
+
+# NOT GRANTED, deliberately: AIUnit's AIBoost scheduling libs in /odm/lib64
+# (libaiboost.so, libaiboost_llm.so). AIUnit dlopen()s them and is denied:
+#   avc: denied { execute } ... path="/odm/lib64/libaiboost.so"
+#        scontext=u:r:platform_app:s0:c512,c768 tcontext=u:object_r:vendor_file:s0
+#
+# There is no way to allow this that is worth taking. platform_app is a
+# coredomain, so both domain.te:1254 ("system components may not execute vendor
+# files") and domain.te:2155 ("system components may not access vendor files")
+# neverallow it, and the build fails. The only escapes are:
+#   - system_executes_vendor_violators, a global attribute -- adding platform_app
+#     hands /vendor read+execute to every platform-signed app on the device;
+#   - relabelling the libs vendor_public_lib_file, which is only truthful if they
+#     are also listed in public.libraries.txt, and they are not.
+#
+# The cost of leaving it denied is bounded: AIUnit logs "AIBoostEnv: failed to
+# load" and falls back to ordinary scheduling. No unit fails to resolve or run.
+# The KSU module carried an equivalent rule only because setenforce 0 made it
+# free; enforcing builds cannot have it.
