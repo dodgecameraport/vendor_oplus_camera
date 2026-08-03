@@ -1,0 +1,711 @@
+From 04d5ba1f0ce1c0edc26a33592c3c32357cdb1df0 Mon Sep 17 00:00:00 2001
+From: Oscar <osm1019@gmail.com>
+Date: Mon, 3 Aug 2026 16:26:58 -0700
+Subject: [PATCH] dodge: Enable real-time 1080p/4K 120fps and clamp 8K video to
+ 30fps
+
+Two related video changes that have to travel together, because the second one
+only exists to contain the fallout of the first.
+
+Real-time 120fps: the fps allow-list in camera_unit_feature_config.protobuf gains
+120 for rear_main, and the app side has to accept it -- yj/o0.smali promotes a
+requested rate above 60 to 0x78, com/oplus/camera/module/a.smali reports the
+120fps mode as supported, and ia/b.smali stops rejecting 0x78 when it validates
+the configured rate.
+
+8K clamp: that allow-list is per-camera with no per-resolution scoping (the
+protobuf is a flat string table -- there is no slot to express "120 at 4K but not
+at 8K"), so once 120 is picked at 4K the stored fps stays 120 when the user
+switches to 8K. The UI correctly hides the option and shows "8K-30", but nothing
+rewrites the value, and recording then freezes. 7680x4320 at 120fps needs
+15,552,000 MB/s against the core's 7,833,600 maximum, so this is a hardware limit
+and not something a config can fix -- 8K caps near 60fps.
+
+Both paths need clamping because they do not share one:
+- yj/o0.smali A(II)V (setVideoSize) runs after setVideoFrameRate, so it re-applies
+  y(30) once the 8K width (0x1e00) is known. y()/A() dispatch across three
+  backends, so clamping in A() covers all of them. This is the mode-switch path.
+- ia/i.smali buildSession sends video_30fps when the video size is video_size_8k.
+  The mode switch never calls buildSession, and recording never calls A()/y().
+---
+ .../com/oplus/camera/module/a.smali           | 85 +++++++++++--------
+ smali_classes12/yj/o0.smali                   | 61 +++++++++----
+ smali_classes28/ia/b.smali                    | 15 ++--
+ smali_classes28/ia/i.smali                    | 33 +++++--
+ 4 files changed, 129 insertions(+), 65 deletions(-)
+
+diff --git a/smali_classes12/com/oplus/camera/module/a.smali b/smali_classes12/com/oplus/camera/module/a.smali
+index eb3a5a2..44980cd 100644
+--- a/smali_classes12/com/oplus/camera/module/a.smali
++++ b/smali_classes12/com/oplus/camera/module/a.smali
+@@ -15209,7 +15209,20 @@
+ .method public W8()I
+     .locals 6
+ 
++    invoke-virtual {p0}, Lcom/oplus/camera/module/a;->tj()I
++
++    move-result v0
++
++    const/16 v1, 0x78
++
++    if-ne v0, v1, :cond_0
++
++    const/4 v0, 0x1
++
++    return v0
++
+     .line 1
++    :cond_0
+     invoke-virtual {p0}, Lcom/oplus/camera/module/BaseMode;->isFrontCamera()Z
+ 
+     .line 2
+@@ -15231,7 +15244,7 @@
+ 
+     .line 11
+     .line 12
+-    if-nez v0, :cond_2
++    if-nez v0, :cond_3
+ 
+     .line 13
+     .line 14
+@@ -15247,7 +15260,7 @@
+     move-result v0
+ 
+     .line 20
+-    if-eqz v0, :cond_2
++    if-eqz v0, :cond_3
+ 
+     .line 21
+     .line 22
+@@ -15259,7 +15272,7 @@
+     move-result v0
+ 
+     .line 26
+-    if-nez v0, :cond_0
++    if-nez v0, :cond_1
+ 
+     .line 27
+     .line 28
+@@ -15271,11 +15284,11 @@
+     move-result v0
+ 
+     .line 32
+-    if-eqz v0, :cond_1
++    if-eqz v0, :cond_2
+ 
+     .line 33
+     .line 34
+-    :cond_0
++    :cond_1
+     sget-object v0, Lcom/oplus/camera/d$c;->E3:Lcom/oplus/camera/d$b;
+ 
+     .line 35
+@@ -15304,7 +15317,7 @@
+     move-result v0
+ 
+     .line 48
+-    if-eqz v0, :cond_1
++    if-eqz v0, :cond_2
+ 
+     .line 49
+     .line 50
+@@ -15316,7 +15329,7 @@
+     move-result v0
+ 
+     .line 54
+-    if-ne v2, v0, :cond_1
++    if-ne v2, v0, :cond_2
+ 
+     .line 55
+     .line 56
+@@ -15326,7 +15339,7 @@
+     goto :goto_0
+ 
+     .line 58
+-    :cond_1
++    :cond_2
+     const v0, 0x830b
+ 
+     .line 59
+@@ -15335,7 +15348,7 @@
+     goto :goto_0
+ 
+     .line 62
+-    :cond_2
++    :cond_3
+     const v0, 0x800b
+ 
+     .line 63
+@@ -15350,7 +15363,7 @@
+     move-result v4
+ 
+     .line 69
+-    if-eqz v4, :cond_5
++    if-eqz v4, :cond_6
+ 
+     .line 70
+     .line 71
+@@ -15362,7 +15375,7 @@
+     move-result v4
+ 
+     .line 75
+-    if-eqz v4, :cond_3
++    if-eqz v4, :cond_4
+ 
+     .line 76
+     .line 77
+@@ -15374,7 +15387,7 @@
+     goto :goto_1
+ 
+     .line 81
+-    :cond_3
++    :cond_4
+     invoke-virtual {p0}, Lcom/oplus/camera/module/a;->r()Z
+ 
+     .line 82
+@@ -15383,7 +15396,7 @@
+     move-result v4
+ 
+     .line 85
+-    if-eqz v4, :cond_4
++    if-eqz v4, :cond_5
+ 
+     .line 86
+     .line 87
+@@ -15395,7 +15408,7 @@
+     goto :goto_1
+ 
+     .line 91
+-    :cond_4
++    :cond_5
+     sget-object v4, Lcom/oplus/camera/d$c;->E3:Lcom/oplus/camera/d$b;
+ 
+     .line 92
+@@ -15424,7 +15437,7 @@
+     move-result v3
+ 
+     .line 105
+-    if-eqz v3, :cond_5
++    if-eqz v3, :cond_6
+ 
+     .line 106
+     .line 107
+@@ -15436,14 +15449,14 @@
+     move-result v3
+ 
+     .line 111
+-    if-ne v2, v3, :cond_5
++    if-ne v2, v3, :cond_6
+ 
+     .line 112
+     .line 113
+     goto :goto_1
+ 
+     .line 114
+-    :cond_5
++    :cond_6
+     move v1, v0
+ 
+     .line 115
+@@ -15492,7 +15505,7 @@
+     move-result v0
+ 
+     .line 137
+-    if-eqz v0, :cond_7
++    if-eqz v0, :cond_8
+ 
+     .line 138
+     .line 139
+@@ -15504,7 +15517,7 @@
+     move-result v0
+ 
+     .line 143
+-    if-eqz v0, :cond_6
++    if-eqz v0, :cond_7
+ 
+     .line 144
+     .line 145
+@@ -15520,7 +15533,7 @@
+     goto :goto_3
+ 
+     .line 150
+-    :cond_6
++    :cond_7
+     const v0, 0x8028
+ 
+     .line 151
+@@ -15529,7 +15542,7 @@
+     goto :goto_2
+ 
+     .line 154
+-    :cond_7
++    :cond_8
+     :goto_3
+     invoke-virtual {p0}, Lcom/oplus/camera/module/a;->Dd()Z
+ 
+@@ -15539,7 +15552,7 @@
+     move-result v0
+ 
+     .line 158
+-    if-eqz v0, :cond_9
++    if-eqz v0, :cond_a
+ 
+     .line 159
+     .line 160
+@@ -15555,7 +15568,7 @@
+     move-result v0
+ 
+     .line 166
+-    if-eqz v0, :cond_8
++    if-eqz v0, :cond_9
+ 
+     .line 167
+     .line 168
+@@ -15566,7 +15579,7 @@
+     goto :goto_4
+ 
+     .line 171
+-    :cond_8
++    :cond_9
+     const-string v0, "com.oplus.feature.video.live.hdr.support"
+ 
+     .line 172
+@@ -15579,7 +15592,7 @@
+     move-result v0
+ 
+     .line 177
+-    if-eqz v0, :cond_9
++    if-eqz v0, :cond_a
+ 
+     .line 178
+     .line 179
+@@ -15588,7 +15601,7 @@
+     .line 180
+     .line 181
+     .line 182
+-    :cond_9
++    :cond_a
+     :goto_4
+     const-string v0, "func_ultra_night_video"
+ 
+@@ -15602,7 +15615,7 @@
+     move-result v0
+ 
+     .line 188
+-    if-eqz v0, :cond_a
++    if-eqz v0, :cond_b
+ 
+     .line 189
+     .line 190
+@@ -15614,7 +15627,7 @@
+     move-result v0
+ 
+     .line 194
+-    if-nez v0, :cond_a
++    if-nez v0, :cond_b
+ 
+     .line 195
+     .line 196
+@@ -15626,7 +15639,7 @@
+     move-result v0
+ 
+     .line 200
+-    if-eqz v0, :cond_a
++    if-eqz v0, :cond_b
+ 
+     .line 201
+     .line 202
+@@ -15635,7 +15648,7 @@
+     .line 203
+     .line 204
+     .line 205
+-    :cond_a
++    :cond_b
+     const-string v0, "func_enhancement_video"
+ 
+     .line 206
+@@ -15648,7 +15661,7 @@
+     move-result v0
+ 
+     .line 211
+-    if-eqz v0, :cond_b
++    if-eqz v0, :cond_c
+ 
+     .line 212
+     .line 213
+@@ -15660,7 +15673,7 @@
+     move-result v0
+ 
+     .line 217
+-    if-eqz v0, :cond_b
++    if-eqz v0, :cond_c
+ 
+     .line 218
+     .line 219
+@@ -15669,7 +15682,7 @@
+     .line 220
+     .line 221
+     .line 222
+-    :cond_b
++    :cond_c
+     const-string v0, "com.oplus.video.watermark.hal.support"
+ 
+     .line 223
+@@ -15682,7 +15695,7 @@
+     move-result v0
+ 
+     .line 228
+-    if-eqz v0, :cond_c
++    if-eqz v0, :cond_d
+ 
+     .line 229
+     .line 230
+@@ -15694,7 +15707,7 @@
+     move-result v0
+ 
+     .line 234
+-    if-eqz v0, :cond_c
++    if-eqz v0, :cond_d
+ 
+     .line 235
+     .line 236
+@@ -15702,7 +15715,7 @@
+ 
+     .line 237
+     .line 238
+-    :cond_c
++    :cond_d
+     const-string v0, "func_follow"
+ 
+     .line 239
+diff --git a/smali_classes12/yj/o0.smali b/smali_classes12/yj/o0.smali
+index 8fc7288..c7ab42a 100644
+--- a/smali_classes12/yj/o0.smali
++++ b/smali_classes12/yj/o0.smali
+@@ -619,7 +619,16 @@
+ .method public final A(II)V
+     .locals 2
+ 
++    const/16 v0, 0x1e00
++
++    if-lt p1, v0, :cond_0
++
++    const/16 v0, 0x1e
++
++    invoke-virtual {p0, v0}, Lyj/o0;->y(I)V
++
+     .line 1
++    :cond_0
+     const/4 v0, 0x2
+ 
+     .line 2
+@@ -627,25 +636,25 @@
+ 
+     .line 3
+     .line 4
+-    if-eq v0, v1, :cond_2
++    if-eq v0, v1, :cond_3
+ 
+     .line 5
+     .line 6
+     const/4 v0, 0x4
+ 
+     .line 7
+-    if-ne v0, v1, :cond_0
++    if-ne v0, v1, :cond_1
+ 
+     .line 8
+     .line 9
+     goto :goto_0
+ 
+     .line 10
+-    :cond_0
++    :cond_1
+     const/4 v0, 0x3
+ 
+     .line 11
+-    if-ne v0, v1, :cond_1
++    if-ne v0, v1, :cond_2
+ 
+     .line 12
+     .line 13
+@@ -661,7 +670,7 @@
+     goto :goto_1
+ 
+     .line 19
+-    :cond_1
++    :cond_2
+     iget-object p0, p0, Lyj/o0;->n:Landroid/media/MediaRecorder;
+ 
+     .line 20
+@@ -674,7 +683,7 @@
+     goto :goto_1
+ 
+     .line 25
+-    :cond_2
++    :cond_3
+     :goto_0
+     iget-object p0, p0, Lyj/o0;->o:Lyj/i;
+ 
+@@ -6858,9 +6867,24 @@
+ .end method
+ 
+ .method public final v(Landroid/media/CamcorderProfile;)V
+-    .locals 3
++    .locals 4
++
++    iget v0, p1, Landroid/media/CamcorderProfile;->videoFrameWidth:I
++
++    const/16 v1, 0x1e00
++
++    if-lt v0, v1, :cond_0
++
++    iget v0, p1, Landroid/media/CamcorderProfile;->videoFrameRate:I
++
++    const/16 v1, 0x1e
++
++    if-le v0, v1, :cond_0
++
++    iput v1, p1, Landroid/media/CamcorderProfile;->videoFrameRate:I
+ 
+     .line 1
++    :cond_0
+     iget v0, p0, Lyj/o0;->v:I
+ 
+     .line 2
+@@ -6868,25 +6892,25 @@
+     const/4 v1, 0x2
+ 
+     .line 4
+-    if-eq v1, v0, :cond_3
++    if-eq v1, v0, :cond_5
+ 
+     .line 5
+     .line 6
+     const/4 v1, 0x4
+ 
+     .line 7
+-    if-ne v1, v0, :cond_0
++    if-ne v1, v0, :cond_1
+ 
+     .line 8
+     .line 9
+     goto :goto_0
+ 
+     .line 10
+-    :cond_0
++    :cond_1
+     const/4 v1, 0x3
+ 
+     .line 11
+-    if-ne v1, v0, :cond_1
++    if-ne v1, v0, :cond_2
+ 
+     .line 12
+     .line 13
+@@ -6902,12 +6926,12 @@
+     goto :goto_1
+ 
+     .line 19
+-    :cond_1
++    :cond_2
+     iget v0, p1, Landroid/media/CamcorderProfile;->audioCodec:I
+ 
+     .line 20
+     .line 21
+-    if-gez v0, :cond_2
++    if-gez v0, :cond_4
+ 
+     .line 22
+     .line 23
+@@ -6932,6 +6956,13 @@
+ 
+     .line 33
+     .line 34
++    const/16 v2, 0x3c
++
++    if-le v1, v2, :cond_3
++
++    const/16 v1, 0x78
++
++    :cond_3
+     invoke-virtual {v0, v1}, Landroid/media/MediaRecorder;->setVideoFrameRate(I)V
+ 
+     .line 35
+@@ -6983,7 +7014,7 @@
+     goto :goto_1
+ 
+     .line 61
+-    :cond_2
++    :cond_4
+     iget-object p0, p0, Lyj/o0;->n:Landroid/media/MediaRecorder;
+ 
+     .line 62
+@@ -6996,7 +7027,7 @@
+     goto :goto_1
+ 
+     .line 67
+-    :cond_3
++    :cond_5
+     :goto_0
+     iget-object p0, p0, Lyj/o0;->o:Lyj/i;
+ 
+diff --git a/smali_classes28/ia/b.smali b/smali_classes28/ia/b.smali
+index 5d75ddf..da3b26e 100644
+--- a/smali_classes28/ia/b.smali
++++ b/smali_classes28/ia/b.smali
+@@ -1554,7 +1554,7 @@
+     move-result p1
+ 
+     .line 70
+-    if-eqz p1, :cond_6
++    if-eqz p1, :cond_7
+ 
+     .line 71
+     .line 72
+@@ -1582,7 +1582,7 @@
+     move-result p1
+ 
+     .line 84
+-    if-eqz p1, :cond_6
++    if-eqz p1, :cond_7
+ 
+     .line 85
+     .line 86
+@@ -1599,14 +1599,19 @@
+     move-result p0
+ 
+     .line 92
+-    if-ne p1, p0, :cond_5
++    if-eq p1, p0, :cond_5
++
++    const/16 p1, 0x78
++
++    if-ne p1, p0, :cond_6
+ 
+     .line 93
+     .line 94
++    :cond_5
+     const/4 v2, 0x1
+ 
+     .line 95
+-    :cond_5
++    :cond_6
+     new-instance p0, Lk6/aa;
+ 
+     .line 96
+@@ -1628,7 +1633,7 @@
+     .line 104
+     .line 105
+     .line 106
+-    :cond_6
++    :cond_7
+     return v2
+ .end method
+ 
+diff --git a/smali_classes28/ia/i.smali b/smali_classes28/ia/i.smali
+index f953e4d..f2e1d6e 100644
+--- a/smali_classes28/ia/i.smali
++++ b/smali_classes28/ia/i.smali
+@@ -1870,6 +1870,21 @@
+ 
+     .line 744
+     :goto_f
++    invoke-virtual/range {p0 .. p0}, Lia/i;->p1()Ljava/lang/String;
++
++    move-result-object v1
++
++    const-string v2, "video_size_8k"
++
++    invoke-virtual {v2, v1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
++
++    move-result v1
++
++    if-eqz v1, :cond_21
++
++    const-string v11, "video_30fps"
++
++    :cond_21
+     sget-object v1, Lcom/oplus/ocs/camera/CameraParameter;->VIDEO_FPS:Lcom/oplus/ocs/camera/CameraParameter$ConfigureKey;
+ 
+     .line 745
+@@ -1903,7 +1918,7 @@
+     move-result v0
+ 
+     .line 761
+-    if-eqz v0, :cond_23
++    if-eqz v0, :cond_24
+ 
+     .line 762
+     .line 763
+@@ -1967,7 +1982,7 @@
+     move-result v1
+ 
+     .line 793
+-    if-nez v1, :cond_22
++    if-nez v1, :cond_23
+ 
+     .line 794
+     .line 795
+@@ -1991,14 +2006,14 @@
+     move-result v1
+ 
+     .line 805
+-    if-eqz v1, :cond_21
++    if-eqz v1, :cond_22
+ 
+     .line 806
+     .line 807
+     goto :goto_10
+ 
+     .line 808
+-    :cond_21
++    :cond_22
+     const/16 v1, 0x3c
+ 
+     .line 809
+@@ -2006,7 +2021,7 @@
+     goto :goto_11
+ 
+     .line 811
+-    :cond_22
++    :cond_23
+     :goto_10
+     invoke-virtual {v15, v11}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+ 
+@@ -2016,7 +2031,7 @@
+     move-result v1
+ 
+     .line 815
+-    if-eqz v1, :cond_21
++    if-eqz v1, :cond_22
+ 
+     .line 816
+     .line 817
+@@ -2078,7 +2093,7 @@
+     move-result v0
+ 
+     .line 846
+-    if-eqz v0, :cond_23
++    if-eqz v0, :cond_24
+ 
+     .line 847
+     .line 848
+@@ -2090,7 +2105,7 @@
+     move-result v0
+ 
+     .line 852
+-    if-eqz v0, :cond_23
++    if-eqz v0, :cond_24
+ 
+     .line 853
+     .line 854
+@@ -2128,7 +2143,7 @@
+     .line 870
+     .line 871
+     .line 872
+-    :cond_23
++    :cond_24
+     :goto_12
+     return-void
+ 
