@@ -38,21 +38,14 @@ type_transition platform_app app_data_file:dir oplus_aiunit_data_file "Detector"
 type_transition platform_app app_data_file:dir oplus_aiunit_data_file "OAA";
 type_transition platform_app app_data_file:dir oplus_aiunit_data_file "OAP";
 
-# NOT GRANTED, deliberately: AIUnit's AIBoost scheduling libs in /odm/lib64
-# (libaiboost.so, libaiboost_llm.so). AIUnit dlopen()s them and is denied:
-#   avc: denied { execute } ... path="/odm/lib64/libaiboost.so"
-#        scontext=u:r:platform_app:s0:c512,c768 tcontext=u:object_r:vendor_file:s0
+# libaiboost is NOT handled here. It is fixed by relabelling the libraries in
+# device/oneplus/dodge/sepolicy/vendor/file_contexts, not by a rule in this file.
 #
-# There is no way to allow this that is worth taking. platform_app is a
-# coredomain, so both domain.te:1254 ("system components may not execute vendor
-# files") and domain.te:2155 ("system components may not access vendor files")
-# neverallow it, and the build fails. The only escapes are:
-#   - system_executes_vendor_violators, a global attribute -- adding platform_app
-#     hands /vendor read+execute to every platform-signed app on the device;
-#   - relabelling the libs vendor_public_lib_file, which is only truthful if they
-#     are also listed in public.libraries.txt, and they are not.
+# Recorded because the obvious rule here is a trap:
 #
-# The cost of leaving it denied is bounded: AIUnit logs "AIBoostEnv: failed to
-# load" and falls back to ordinary scheduling. No unit fails to resolve or run.
-# The KSU module carried an equivalent rule only because setenforce 0 made it
-# free; enforcing builds cannot have it.
+#   allow platform_app vendor_file:file { read open getattr map execute };
+#
+# That does not build. platform_app is a coredomain, so domain.te:1254 and :2155
+# both neverallow it. Nor is it needed -- appdomain already holds exactly this
+# access against same_process_hal_file (system/sepolicy/private/app.te), which
+# is what those libraries should have been labelled in the first place.

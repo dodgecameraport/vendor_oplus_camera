@@ -28,6 +28,20 @@ PRODUCT_COPY_FILES += \
 # empty values there make the AI inference API reject requests with 3000404
 # (请求头缺失 / "request header missing"). These were previously being set at
 # runtime by a KernelSU service script -- they belong in the build.
+#
+# KNOWN LIMITATION: ro.build.version.ota carries the NA model (CPH2655) and goes
+# to every unit, including the Indian (CPH2649) and European (CPH2653) ones. The
+# region-dependent properties are handled per unit in
+# device/oneplus/dodge/recovery/root/vendor/odm/etc/23893/build.<revision>.prop,
+# which init selects from ro.boot.hardware.revision -- but this one cannot simply
+# move there, because a property defined in more than one file resolves by load
+# order and odm is not reliably read before product.
+#
+# Left as-is rather than guessed at: the EU and IN OTA strings are not known, and
+# an invented one is not obviously better than the wrong-but-well-formed value
+# here. If AI cloud calls turn out to fail on non-NA units, this is the first
+# thing to look at -- collect the real ro.build.version.ota from a stock unit of
+# that region rather than deriving it from the model.
 PRODUCT_PRODUCT_PROPERTIES += \
     ro.build.version.oplus.api=38 \
     ro.build.version.oplus.sub_api=48 \

@@ -1,2 +1,12 @@
+# Deliberately NOT tagged app_data_file_type, even though installd's rules are
+# written against that attribute and these are app data directories. sepolicy_test
+# rejects it:
+#
+#   The following types on /data/ /odm/ /product/ /vendor/ must not be associated
+#   with the "app_data_file_type" attribute.
+#
+# The attribute is for types installd assigns dynamically through seapp_contexts;
+# ours are named statically in file_contexts, so the two are mutually exclusive.
+# installd is granted what it needs directly in installd.te instead.
 type oplus_gallery_data_file, file_type, data_file_type, core_data_file_type;
 type oplus_aiunit_data_file, file_type, data_file_type, core_data_file_type;

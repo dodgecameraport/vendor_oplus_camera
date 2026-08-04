@@ -1,0 +1,25 @@
+# installd manages app data directories on the app's behalf -- creating them,
+# relabelling on install, measuring for the storage UI, and deleting on uninstall.
+# Its own rules are written against the app_data_file_type attribute, which the
+# Gallery and AIUnit types cannot carry: sepolicy_test rejects that attribute on
+# any type named statically in file_contexts, and both of ours are (see file.te).
+#
+# So the access has to be granted per type. Without it the first enforcing boot
+# gives:
+#
+#   avc: denied { read } for comm="binder:2164_4" name="component"
+#        scontext=u:r:installd:s0
+#        tcontext=u:object_r:oplus_gallery_data_file:s0:c512,c768 tclass=dir
+#
+# Mirrors the two rules installd already has for app_data_file_type in
+# system/sepolicy/private/installd.te rather than granting only the observed
+# denial, because the failures show up late otherwise -- read is what boot
+# happened to hit first, but uninstall needs unlink and relabelfrom, and a
+# missing rule there strands the directory instead of logging anything obvious.
+allow installd oplus_gallery_data_file:dir { create_dir_perms relabelfrom relabelto };
+allow installd oplus_gallery_data_file:notdevfile_class_set
+    { create_file_perms relabelfrom relabelto };
+
+allow installd oplus_aiunit_data_file:dir { create_dir_perms relabelfrom relabelto };
+allow installd oplus_aiunit_data_file:notdevfile_class_set
+    { create_file_perms relabelfrom relabelto };
