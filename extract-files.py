@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 
+import hashlib
 import json
 import os
 import re
@@ -273,8 +274,30 @@ def blob_fixup_aiunit_preinstall_packs(ctx, file, file_path, *args, tmp_dir=None
     # is the only one left working, and it is already how the bundled OCR engines
     # and image_scan_code get installed, so we ride that path.
     #
-    # A pack is only picked up if it is also listed in unit_config_list.json, so
-    # copying the APK is not enough -- register/refresh the entry too.
+    # A pack is only picked up if it is ALSO registered in two separate files,
+    # and unit_config_list.json is only one of them. Orange.json is the version
+    # and integrity registry:
+    #
+    #   {"id": 185618451, "version": 1014,
+    #    "fileName": "Plugin/plugin-image_scan_code-185618451-1014.apk",
+    #    "fileSize": 16479081, "fileHash": "<sha256>", "type": ".apk",
+    #    "subDir": "Plugin", "autoUninstall": false}
+    #
+    # AssetsUnitStore only unpacks an asset into app_preinstalled/ if it has a
+    # record here, and LocalUnitStore.getConfigurationVersion() reads its version
+    # back. With no record the version comes out -1, isLocalFileValid() is then
+    # false regardless of the file being present, and UnitRouter parks the unit at
+    # state 6 / kErrorNoDownload:
+    #
+    #   UnitRouter: updateWrapperWithFileStatus, local file
+    #     DependConfig(id=185622541, strict=true), invalid, version: -1
+    #
+    # Measured on device before this was added: of the 13 plugins in assets only
+    # image_scan_code -- the single one carrying a stock Orange record -- had been
+    # unpacked into app_preinstalled/Plugin. The installed count matched the
+    # has-a-record count exactly in every subdirectory (Plugin 1/1, Engine 15/15,
+    # Detector 10/10, OAA 1/1, OAP 1/1), and all 19 packs shipped in aiunit-packs
+    # were in the no-record set. None of them had ever installed.
     if tmp_dir is None:
         return
 
@@ -290,6 +313,14 @@ def blob_fixup_aiunit_preinstall_packs(ctx, file, file_path, *args, tmp_dir=None
     units = json.loads(unit_config.read_text(encoding='utf-8'))
     by_id = {u.get('unitId'): u for u in units if isinstance(u, dict)}
 
+    orange_config = assets / 'Orange.json'
+    orange = (
+        json.loads(orange_config.read_text(encoding='utf-8'))
+        if orange_config.exists()
+        else []
+    )
+    orange_added = []
+
     # Plugin/, Engine/, Detector/ -- mirrors the layout AIUnit already ships.
     for kind_dir in sorted(p for p in packs_root.iterdir() if p.is_dir()):
         dest = assets / kind_dir.name
@@ -303,6 +334,26 @@ def blob_fixup_aiunit_preinstall_packs(ctx, file, file_path, *args, tmp_dir=None
             shutil.copy2(pack, dest / pack.name)
 
             unit_id = int(match.group('id'))
+            unit_version = int(match.group('ver'))
+
+            # fileHash is a plain sha256 of the file and fileSize its byte count
+            # -- verified against every stock record whose asset is actually
+            # shipped, 12 of 12 matched. The remaining stock records describe
+            # engines that get downloaded rather than bundled.
+            payload = pack.read_bytes()
+            orange_added.append(
+                {
+                    'id': unit_id,
+                    'version': unit_version,
+                    'fileName': f'{kind_dir.name}/{pack.name}',
+                    'fileSize': len(payload),
+                    'fileHash': hashlib.sha256(payload).hexdigest(),
+                    'type': '.apk' if pack.suffix == '.apk' else '.zip',
+                    'subDir': kind_dir.name,
+                    'autoUninstall': False,
+                }
+            )
+
             unit = by_id.get(unit_id)
             if unit is None:
                 # Engines are referenced by id from the detector manifests and
@@ -320,7 +371,7 @@ def blob_fixup_aiunit_preinstall_packs(ctx, file, file_path, *args, tmp_dir=None
 
             # Keep the declared version in sync with the pack we actually ship,
             # and make sure nothing we bundle is left switched off.
-            unit['unitVersion'] = int(match.group('ver'))
+            unit['unitVersion'] = unit_version
             unit['disabled'] = False
 
             # preinstallWithUnit is what decides whether a unit is installed
@@ -342,6 +393,20 @@ def blob_fixup_aiunit_preinstall_packs(ctx, file, file_path, *args, tmp_dir=None
                         unit[key] = manifest[key]
 
     unit_config.write_text(json.dumps(units, indent=2), encoding='utf-8')
+
+    # Ours win for any id already described: the record has to name the file that
+    # is actually in assets, and where we ship a pack that is what is there. Stock
+    # repeats some engine ids verbatim (AIUnit dedupes on load, and the device
+    # copy comes back with 28 records for the 39 in assets), so dropping every
+    # record for an id we are replacing loses nothing.
+    replaced = {record['id'] for record in orange_added}
+    orange = [
+        record
+        for record in orange
+        if not (isinstance(record, dict) and record.get('id') in replaced)
+    ]
+    orange.extend(orange_added)
+    orange_config.write_text(json.dumps(orange, indent=2), encoding='utf-8')
 
 
 # ConfigAbilityWrapper flags that gate the AI entries in the Gallery editor.
