@@ -444,6 +444,145 @@ def blob_fixup_gallery_force_ai_flags(ctx, file, file_path, *args, tmp_dir=None,
     )
 
 
+# Gallery builds every cloud request URL from a base it reads out of the ColorOS
+# AppFeature provider:
+#
+#   FeatureUtils$e.g <- AppFeatureProviderUtils.c(cr, "com.oplus.gallery3d.videoeditor_url")
+#
+# which SecurityUrlImpl returns and OplusNetServiceManager concatenates with the
+# request path. Off OOS that provider does not exist -- the same reason the
+# feature flags above all read false -- so the base comes back empty and every
+# request is issued against a bare path:
+#
+#   NetworkExecutor: doTask, failed! error=Expected URL scheme 'http' or 'https'
+#     but no colon was found
+#   RemoteModelInfoManager: fetch, failed! had init but cache error
+#
+# GetModelRequest is on this path, so with no base URL the AI models can never be
+# fetched and the tools that need them stay broken no matter what AIUnit does.
+#
+# The host below is the one AlphaDroid hardcodes (db752670). Despite the "-cn" in
+# the name it is not a mainland-China server: it resolves into AWS ap-southeast-1
+# (52.220.204.101 / 18.136.53.85) and answers with a valid certificate, i.e. it is
+# the export endpoint. Checked because this ships to NA/EU/IN units alike -- there
+# is no regional variant to pick instead, -sg/-in/-eu/-us/-row all fail to resolve.
+GALLERY_MODEL_ENDPOINT = 'https://fourier-videoclip-cn.allawntech.com'
+
+# Deliberately NOT touched: the sibling base URL, FeatureUtils$e.i from
+# "com.oplus.gallery3d.rm_editor_url". "rm" is Realme, not "remove" -- its only
+# consumers are TemplateResourceRequest/Manager and
+# RealmeRestrictWatermarkMetadataRequest, none of which are on the AI model path.
+# Its real value is not in the dump (these keys are cloud-pushed, not shipped in
+# my_product/etc/extension), so there is nothing to set it to but a guess.
+
+
+def blob_fixup_gallery_model_endpoint(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
+    if tmp_dir is None:
+        return
+
+    # Both classes are obfuscated and the names move between blobs -- upstream's
+    # SecurityUrlImpl is "eli", ours is "bck" -- so match on the .source name,
+    # which survives. Note smali*/ and not smali_classes*/: SecurityUrlImpl lands
+    # in classes.dex, which apktool unpacks to a plain smali/.
+    root = Path(tmp_dir)
+    security_url = None
+    net_services = []
+    for candidate in sorted(root.glob('smali*/com/oplus/**/*.smali')):
+        text = candidate.read_text(encoding='utf-8', errors='ignore')
+        if '.source "SecurityUrlImpl.java"' in text:
+            security_url = (candidate, text)
+        elif '.source "OplusNetServiceManager.java"' in text:
+            net_services.append((candidate, text))
+
+    if security_url is None:
+        return
+
+    path, data = security_url
+    if GALLERY_MODEL_ENDPOINT in data:
+        return
+
+    match = re.search(r'^\.class[^\n]* (L[\w/$]+;)$', data, re.M)
+    if match is None:
+        return
+    class_desc = match.group(1)
+
+    # R8 merges unrelated statics into this class, so anchor on the one virtual
+    # method that returns a String rather than replacing the class wholesale.
+    match = re.search(
+        r'^\.method (public (?:final )?(\w+)\(\)Ljava/lang/String;)$', data, re.M
+    )
+    if match is None:
+        return
+    getter = f'{class_desc}->{match.group(2)}('
+
+    fixed = _replace_smali_method(
+        data,
+        match.group(1),
+        '    .registers 2\n'
+        '\n'
+        f'    const-string v0, "{GALLERY_MODEL_ENDPOINT}"\n'
+        '\n'
+        '    return-object v0\n',
+    )
+    if fixed != data:
+        path.write_text(fixed, encoding='utf-8')
+
+    # The callers null-check the SecurityUrlImpl instance and fall back to "",
+    # which concatenates to a bare path just the same, so pin them too.
+    #
+    # Selecting on a call to the getter, not merely a mention of the class: the
+    # sibling builder that reads the Realme base URL inline still names the class
+    # in IAppDM.a()'s return type, and matching on the descriptor alone rewrote
+    # that one too.
+    body = (
+        '    .registers 4\n'
+        '\n'
+        '    invoke-static {p0}, Landroid/text/TextUtils;->isEmpty(Ljava/lang/CharSequence;)Z\n'
+        '\n'
+        '    move-result v0\n'
+        '\n'
+        '    if-eqz v0, :cond_endpoint_build\n'
+        '\n'
+        '    const/4 p0, 0x0\n'
+        '\n'
+        '    return-object p0\n'
+        '\n'
+        '    :cond_endpoint_build\n'
+        '    new-instance v0, Ljava/lang/StringBuilder;\n'
+        '\n'
+        '    invoke-direct {v0}, Ljava/lang/StringBuilder;-><init>()V\n'
+        '\n'
+        f'    const-string v1, "{GALLERY_MODEL_ENDPOINT}"\n'
+        '\n'
+        '    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;\n'
+        '\n'
+        '    invoke-virtual {v0, p0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;\n'
+        '\n'
+        '    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;\n'
+        '\n'
+        '    move-result-object p0\n'
+        '\n'
+        '    return-object p0\n'
+    )
+
+    for path, data in net_services:
+        fixed = data
+        for match in re.finditer(
+            r'^\.method (public static \w+\(Ljava/lang/String;\)Ljava/lang/String;)$',
+            data,
+            re.M,
+        ):
+            signature = match.group(1)
+            current = re.search(
+                rf'(?ms)^\.method {re.escape(signature)}\n(.*?)^\.end method', data
+            )
+            if current is None or getter not in current.group(1):
+                continue
+            fixed = _replace_smali_method(fixed, signature, body)
+        if fixed != data:
+            path.write_text(fixed, encoding='utf-8')
+
+
 def blob_fixup_stdid_receiver_flags(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
     # A14+ requires RECEIVER_EXPORTED / RECEIVER_NOT_EXPORTED.
     if tmp_dir is None:
@@ -733,6 +872,7 @@ blob_fixups: blob_fixups_user_type = {
         .apktool_unpack('patches-gallery')
         .patch_dir('patches-gallery')
         .call(blob_fixup_gallery_force_ai_flags)
+        .call(blob_fixup_gallery_model_endpoint)
         .apktool_pack()
         .stripzip(),
     'system_ext/priv-app/AIUnit/AIUnit.apk': blob_fixup()
