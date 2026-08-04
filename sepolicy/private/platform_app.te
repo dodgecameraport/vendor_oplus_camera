@@ -32,6 +32,29 @@ type_transition platform_app app_data_file:dir oplus_gallery_data_file "componen
 # makes, and it stays inside the platform_app domain.
 allow platform_app oplus_aiunit_data_file:dir create_dir_perms;
 allow platform_app oplus_aiunit_data_file:file { create_file_perms execute };
+
+# The installer does not copy a preinstalled pack into files/<Kind>/<id>/<ver>/,
+# it symlinks it back to the unpacked copy in app_preinstalled/<Kind>/. Granting
+# dir and file but not lnk_file left it unable to place any of them:
+#
+#   avc: denied { create } for comm="AI-install[2]"
+#     name="oaa-oaa_aiunit_core_lib_provider_aiboost-26218497-3024-pall-rall"
+#     scontext=u:r:platform_app tcontext=u:object_r:oplus_aiunit_data_file
+#     tclass=lnk_file
+#
+# This is also why the type is deliberately not tagged app_data_file_type over in
+# file.te. Symlinks on a type that carries that attribute are held to equivalence
+# rather than dominance -- system/sepolicy/private/mls:
+#
+#   mlsconstrain { lnk_file } { open setattr unlink link rename read }
+#       ( (t2 != app_data_file_type or t2 == privapp_data_file)
+#         or l1 eq l2 or t1 == mlstrustedsubject);
+#
+# so a symlink that ends up app_data_file:s0 while the app runs at s0:c512,c768
+# cannot even be followed, which is what the 34 read denials against the older
+# links on a dirty-flashed device were. Ours are exempt from that clause, so the
+# allow below is all they need.
+allow platform_app oplus_aiunit_data_file:lnk_file create_file_perms;
 type_transition platform_app app_data_file:dir oplus_aiunit_data_file "Engine";
 type_transition platform_app app_data_file:dir oplus_aiunit_data_file "Plugin";
 type_transition platform_app app_data_file:dir oplus_aiunit_data_file "Detector";
