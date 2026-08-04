@@ -6,8 +6,10 @@
 #
 
 import json
+import os
 import re
 import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -793,6 +795,75 @@ module = ExtractUtilsModule(
     namespace_imports=namespace_imports,
 )
 
+# apktool needs a lot of scratch space for this module: OppoGallery2 is ~300 MB
+# with 31 dex directories, and decoding plus repacking it needs well over 10 GB
+# at once. /tmp is a tmpfs on the usual build hosts and is nowhere near that.
+#
+# Worth being explicit about, because the failure is badly disguised. When the
+# scratch filesystem fills, aapt2 does not report ENOSPC -- it reports
+#
+#     error: failed to write entry data
+#     <file>.json: error: file failed to compile
+#
+# which reads like a corrupt resource in the APK and sends you looking at the
+# wrong thing entirely. Worse, extract-utils empties its output tree before it
+# repopulates, so a crash partway through leaves the blob repo stripped of
+# Android.bp, camera-vendor.mk and a couple of hundred blobs. That is recoverable
+# with `git checkout -- .` in vendor/oplus/camera/camera, but only if you know
+# that is what happened.
+REQUIRED_SCRATCH_BYTES = 24 * 1024**3
+
+
+def use_scratch_dir_with_space():
+    """
+    Point tempfile at a filesystem with room for the apktool work dirs.
+
+    Decided purely on free space, including when TMPDIR is already set. An
+    explicit TMPDIR that is too small is not a preference worth honouring -- it
+    just reproduces the failure this exists to avoid -- so it is reported and
+    overridden rather than obeyed.
+    """
+    # gettempdir() already resolves TMPDIR/TEMP/TMP, so this covers both the
+    # inherited-environment and the plain /tmp case.
+    default_tmp = tempfile.gettempdir()
+    if shutil.disk_usage(default_tmp).free >= REQUIRED_SCRATCH_BYTES:
+        return
+
+    scratch = os.path.join(
+        os.environ.get('XDG_CACHE_HOME') or os.path.expanduser('~/.cache'),
+        'extract-utils',
+        'scratch',
+    )
+    os.makedirs(scratch, exist_ok=True)
+
+    os.environ['TMPDIR'] = scratch
+    tempfile.tempdir = scratch
+
+    # Java resolves java.io.tmpdir at startup and ignores TMPDIR, so apktool and
+    # the aapt2 it spawns would still land back in /tmp without this. Appended
+    # rather than assigned so an existing JAVA_TOOL_OPTIONS (heap size, GC) is
+    # kept; the last -D on the line wins.
+    java_options = os.environ.get('JAVA_TOOL_OPTIONS', '')
+    os.environ['JAVA_TOOL_OPTIONS'] = (
+        f'{java_options} -Djava.io.tmpdir={scratch}'.strip()
+    )
+
+    free_gib = shutil.disk_usage(scratch).free / 1024**3
+    print(
+        f'{default_tmp} is too small for apktool, using {scratch} '
+        f'({free_gib:.0f} GiB free)'
+    )
+    if shutil.disk_usage(scratch).free < REQUIRED_SCRATCH_BYTES:
+        print(
+            f'warning: {scratch} has under '
+            f'{REQUIRED_SCRATCH_BYTES / 1024**3:.0f} GiB free either; the '
+            f'OppoGallery2 repack may still fail. Set TMPDIR to somewhere '
+            f'with more room.'
+        )
+
+
 if __name__ == '__main__':
+    use_scratch_dir_with_space()
+
     utils = ExtractUtils.device(module)
     utils.run()
