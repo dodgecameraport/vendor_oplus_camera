@@ -38,6 +38,10 @@ type_transition platform_app app_data_file:dir oplus_aiunit_data_file "Detector"
 type_transition platform_app app_data_file:dir oplus_aiunit_data_file "OAA";
 type_transition platform_app app_data_file:dir oplus_aiunit_data_file "OAP";
 
+# Gallery reads the oplus touch properties when setting up the editor surface.
+# From AlphaDroid db752670.
+get_prop(platform_app, system_oplus_touch_prop)
+
 # libaiboost is NOT handled here. It is fixed by relabelling the libraries in
 # device/oneplus/dodge/sepolicy/vendor/file_contexts, not by a rule in this file.
 #
