@@ -416,7 +416,6 @@ GALLERY_AI_FEATURE_FLAGS = (
     'feature_is_support_beauty_entrance',
     'feature_is_support_ipu_filter',
     'feature_is_support_ai_deblur',
-    'feature_is_support_rm_ai_deblur',
     'feature_is_support_ai_dereflection',
     'feature_is_support_ai_eliminate',
     'feature_is_support_eliminate_pen',
@@ -445,6 +444,30 @@ GALLERY_AI_FEATURE_FLAGS = (
 # Deliberately NOT forced: feature_is_support_ai_defog. Defog reaches the ODM
 # APS/libAlgoProcess path, which segfaults in doIPUArcDeHazyProcess -- showing
 # the entry just hands the user a crash.
+#
+# Deliberately NOT forced: feature_is_support_rm_ai_deblur. Forcing it is what
+# BROKE AI Unblur -- this flag does not enable anything, it switches which
+# backend the tool uses. AIRepairIntroductionConfig picks the command from it:
+#
+#   if-nez v0, :cond_28              # v0 = feature_is_support_rm_ai_deblur
+#       const-string v0, "cmd_deblur"    <- false: cloud, cloud_image_deblur
+#       goto :goto_2a
+#   :cond_28
+#       const-string v0, "cmd_sharpen"   <- true:  local, vision_image_sharpen
+#
+# cmd_sharpen routes through RMDeblurClient.sharpenImageLocally() and needs OAP
+# vision_image_sharpen (1052679) plus OAA 17833993. Neither is in our packs, in
+# either /data backup, or on stock -- so on device it died as:
+#
+#   UnitConfig(vision_image_sharpen, 1052679, ...) not support
+#   local file DependConfig(id=1052679, strict=true), invalid, version: -1
+#   queryDetectInfo: state=13 checkErrorCode=kErrorRouteDisabled
+#   AIUnit-SDK(gallery)-ImageSharpenClient: runAction no started!
+#
+# and surfaced as "errorInfo=(-1, result is null)". Left false, the tool takes
+# cmd_deblur to cloud_image_deblur, which we ship and which reports state=3
+# kErrorNone -- the same unit a stock capture ran at errCode=0. Stock does not
+# set this flag either.
 #
 # Deliberately NOT forced: feature_is_support_ai_graffiti (AI Sketch). Removed
 # 2026-08-04 after exhausting every source. AI Sketch needs AIUnit unit
