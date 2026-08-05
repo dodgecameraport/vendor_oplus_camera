@@ -426,7 +426,6 @@ GALLERY_AI_FEATURE_FLAGS = (
     'feature_is_support_ai_id_photo',
     'feature_is_support_ai_best_take',
     'feature_is_support_ai_matting',
-    'feature_is_support_ai_graffiti',
     'feature_is_support_ai_deglare',
     'feature_is_support_plugin_available',
     'feature_is_support_show_ai_logo',
@@ -446,6 +445,18 @@ GALLERY_AI_FEATURE_FLAGS = (
 # Deliberately NOT forced: feature_is_support_ai_defog. Defog reaches the ODM
 # APS/libAlgoProcess path, which segfaults in doIPUArcDeHazyProcess -- showing
 # the entry just hands the user a crash.
+#
+# Deliberately NOT forced: feature_is_support_ai_graffiti (AI Sketch). Removed
+# 2026-08-04 after exhausting every source. AI Sketch needs AIUnit unit
+# `cloud_image_ai_graffiti`, which is absent from unit_config_list.json, from
+# this device, from both /data backups, from the 64 cached server configs --
+# and, confirmed by a stock ColorOS capture the same day, from stock itself.
+# Stock ships 13 plugin packs and graffiti is not among them, so there is no
+# device or firmware we can reach that has the pack. Forcing the flag only
+# rendered a button whose every tap ends in "unit config not found". The
+# Gallery-side implementation is fully present (~200 classes under
+# com.oplus.tbluniformeditor.plugins.aigraffiti), so restoring this line is all
+# that is needed if a pack ever surfaces.
 
 GALLERY_OLIVE_ANCHOR = '    :goto_olive_check_done\n'
 
