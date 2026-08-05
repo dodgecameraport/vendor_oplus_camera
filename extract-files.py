@@ -458,6 +458,75 @@ GALLERY_AI_FEATURE_FLAGS = (
 # com.oplus.tbluniformeditor.plugins.aigraffiti), so restoring this line is all
 # that is needed if a pack ever surfaces.
 
+# Downloadable Gallery components, keyed by the config entry that gates them.
+#
+# These are NOT AIUnit packs and none of the unit_config_list/Orange.json
+# machinery applies -- they come down through Gallery's own
+# ComponentDownloadManager into files/component/<Name>/. ModelConfig
+# (com/oplus/aiunit/vision/oje) resolves availability as o() = n() && m():
+# n() validates the component dir against its config.json, m() checks each
+# required file is present, and e() supplies the wanted version by reading
+# these keys out of GalleryCommonListConfig.
+#
+# The default asset ships face/label versions but has no beauty entry at all,
+# so e() falls through to its -1 default and the download is never even
+# attempted. That is the whole reason Retouch is dead off OOS: it is not
+# blocked, it is never asked for.
+#
+#   Retouch -> BeautySource -> libarcsoft_beauty_ex.so (20 MB),
+#              liboplus_image_process.so, libmpbase.so
+#
+# Version numbers are the cloud-config download version, NOT the component's
+# internal config.json mVersion -- verified on a stock capture where
+# FaceModelSource carried mVersion=1 while face_component_version was 16. The
+# values below are the ones a stock CPH2653 actually had installed.
+GALLERY_COMPONENT_VERSIONS = {
+    'beauty_component_version': 2,
+    'face_component_version': 16,
+    'label_component_version': 17,
+    'video_label_component_version': 220,
+}
+
+GALLERY_COMMON_CONFIG_ASSET = 'assets/default_gallery_common_list_config.xml'
+
+
+def blob_fixup_gallery_component_versions(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
+    # Ask for the components Gallery would otherwise never request. Editing the
+    # bundled default rather than patching smali keeps this honest: a live cloud
+    # config still wins, because GalleryCommonListConfig only falls back to this
+    # asset when the server has not answered. So this raises the floor without
+    # pinning anyone to a stale version.
+    if tmp_dir is None:
+        return
+
+    config = Path(tmp_dir) / GALLERY_COMMON_CONFIG_ASSET
+    if not config.exists():
+        return
+
+    data = config.read_text(encoding='utf-8')
+    original = data
+
+    for key, version in GALLERY_COMPONENT_VERSIONS.items():
+        entry = f'<{key}>{version}</{key}>'
+        existing = re.search(rf'<{key}>\s*(\d+)\s*</{key}>', data)
+        if existing is None:
+            # No entry at all (beauty). Put it beside the other component
+            # versions rather than at the end of the file -- <filter-conf> is
+            # order-insensitive, but keeping them together is what makes the
+            # missing one obvious next time.
+            anchor = re.search(r'([ \t]*)<face_component_version>[^\n]*\n', data)
+            if anchor is None:
+                continue
+            data = data.replace(
+                anchor.group(0), f'{anchor.group(0)}{anchor.group(1)}{entry}\n', 1
+            )
+        elif int(existing.group(1)) < version:
+            data = data.replace(existing.group(0), entry, 1)
+
+    if data != original:
+        config.write_text(data, encoding='utf-8')
+
+
 GALLERY_OLIVE_ANCHOR = '    :goto_olive_check_done\n'
 
 
@@ -949,6 +1018,7 @@ blob_fixups: blob_fixups_user_type = {
         .patch_dir('patches-gallery')
         .call(blob_fixup_gallery_force_ai_flags)
         .call(blob_fixup_gallery_model_endpoint)
+        .call(blob_fixup_gallery_component_versions)
         .apktool_pack()
         .stripzip(),
     'system_ext/priv-app/AIUnit/AIUnit.apk': blob_fixup()
