@@ -418,6 +418,10 @@ GALLERY_AI_FEATURE_FLAGS = (
     # them Perfect Shot's face picker comes back empty. See the note below.
     'feature_is_support_local_hdr_edit',
     'feature_is_support_uhdr_edit',
+    # Also not AI entries -- the *viewer* side of the same capability. These are
+    # what put the ProXDR badge on an HDR photo. See the note below.
+    'feature_is_support_local_hdr',
+    'feature_is_support_ultra_hdr',
     'feature_is_support_ai_deblur',
     'feature_is_support_ai_dereflection',
     'feature_is_support_ai_eliminate',
@@ -482,6 +486,49 @@ GALLERY_AI_FEATURE_FLAGS = (
 # not observed end to end. If Perfect Shot still shows no candidates, re-check
 # whether ProxyGpuFrame/UhdrRenderer appear at all before touching anything else
 # -- if they are still 0, the gate is somewhere further upstream.
+
+# Forced for the ProXDR badge: local_hdr + ultra_hdr.
+#
+# On stock, opening an HDR photo puts a small ProXDR pill on the image itself
+# (press and hold it to compare against the un-brightened version). It is a
+# ViewStub in the photo viewer, inflated by BrightenCompareComponent.e():
+#
+#   R.id.vs_proxdr -> R.layout.btn_proxdr -> R.id.iv_proxdr
+#   laid out by photopage_pro_xdr_{width,height,margin_start,margin_bottom}
+#
+# Both brighten sections -- PhotoBrightenSection and the CompatLHDR variant --
+# guard that inflate on BrightenViewModel.o() (com/oplus/aiunit/vision/msg):
+#
+#   o() = p() || r()
+#   p() = feature_is_support_local_hdr  && isHdrMedia && ...
+#   r() = feature_is_support_ultra_hdr  && isHdrMedia && ...
+#
+# Off OOS both flags read false, o() is false, the ViewStub is never inflated
+# and no photo ever shows the badge. Each is AND-ed with the per-media HDR
+# check, so the same safety property as the _edit pair holds: forcing them
+# cannot put a ProXDR badge on an SDR photo.
+#
+# Deliberately NOT forced alongside them: feature_is_support_local_hdr_only.
+# It is a selector, not an enable -- SectionSelector (pak.b) swaps the whole
+# brighten implementation on it:
+#
+#   local_hdr_only ? PhotoBrightenSectionCompatLHDR : PhotoBrightenSection
+#
+# Left false we get PhotoBrightenSection, the path traced above.
+#
+# The video-side ProXDR chips are a different feature and stay off. PhotoInfo
+# format_type 4/5 drive photopage_detail_ic_proxdr{,_dolby_vision} in
+# PhotoDetailsInfoSection.T(), but their classifier is VideoTypeUtils (arn.d =
+# Dolby Vision track, arn.e = HLG track), so they never fire on a photo. Their
+# gate is feature_is_support_dolby_brighten / _hdr_vision_brighten plus
+# is_support_dolby_decode -- and that last one is selector-shaped again
+# (decode && brighten -> tag 5, brighten alone -> tag 4) as well as asserting a
+# Dolby Vision decode capability nobody has checked on this build. Not touched.
+#
+# NOT flash-verified: traced from the decompiled viewer, not observed. The
+# badge is silent -- it logs nothing on either build -- so the only test is
+# opening an HDR photo and looking. If it stays missing, check msg.k (the
+# per-media HDR flag) before suspecting these two.
 
 # Deliberately NOT forced: feature_is_support_ipu_beauty. Same shape of bug as
 # rm_ai_deblur below -- it selects a backend rather than enabling anything, and
