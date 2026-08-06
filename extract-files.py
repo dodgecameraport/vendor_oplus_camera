@@ -412,7 +412,6 @@ def blob_fixup_aiunit_preinstall_packs(ctx, file, file_path, *args, tmp_dir=None
 # ConfigAbilityWrapper flags that gate the AI entries in the Gallery editor.
 # 0005 already forces the olive* ones for Live Photo; these are the rest.
 GALLERY_AI_FEATURE_FLAGS = (
-    'feature_is_support_ipu_beauty',
     'feature_is_support_beauty_entrance',
     'feature_is_support_ipu_filter',
     'feature_is_support_ai_deblur',
@@ -445,6 +444,30 @@ GALLERY_AI_FEATURE_FLAGS = (
 # APS/libAlgoProcess path, which segfaults in doIPUArcDeHazyProcess -- showing
 # the entry just hands the user a crash.
 #
+# Deliberately NOT forced: feature_is_support_ipu_beauty. Same shape of bug as
+# rm_ai_deblur below -- it selects a backend rather than enabling anything, and
+# forcing it is what BROKE Retouch. MenuVM gates the model loader on it:
+#
+#   const-string v5, "feature_is_support_ipu_beauty"
+#   invoke-static {v1, v5, v4}, e26->f(ILjava/lang/String;Z)Z
+#   move-result v1
+#   if-nez v1, :cond_6b            <- flag TRUE: jump PAST the loader
+#   new-instance v4, Lcom/oplus/aiunit/vision/ti3;   (BeautyModelLoader)
+#
+# True means "this device does beauty on the IPU", so Gallery never builds the
+# loader and never fetches the downloadable ArcSoft model. On stock the flag is
+# false and BeautyModelLoader pulls the component down:
+#
+#   BeautyModelLoader: RemoteModelInfoManager.fetch onSuccess.
+#     RemoteModelInfo(name=BeautySource, version=2, zipMd5=38fb...)
+#
+# On our build that tag logs NOTHING -- the fetch was not failing, it was never
+# invoked. Note the download runs through RemoteModelInfoManager, NOT
+# ComponentDownloadManager, which is why greps for the latter found nothing.
+#
+# feature_is_support_beauty_entrance is a different flag and stays forced -- it
+# is what shows the Retouch entry, and it lives in a separate class.
+
 # Deliberately NOT forced: feature_is_support_rm_ai_deblur. Forcing it is what
 # BROKE AI Unblur -- this flag does not enable anything, it switches which
 # backend the tool uses. AIRepairIntroductionConfig picks the command from it:
