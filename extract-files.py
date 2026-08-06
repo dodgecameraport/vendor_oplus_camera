@@ -414,6 +414,10 @@ def blob_fixup_aiunit_preinstall_packs(ctx, file, file_path, *args, tmp_dir=None
 GALLERY_AI_FEATURE_FLAGS = (
     'feature_is_support_beauty_entrance',
     'feature_is_support_ipu_filter',
+    # Not AI entries -- these two are the editor's HDR capability, and without
+    # them Perfect Shot's face picker comes back empty. See the note below.
+    'feature_is_support_local_hdr_edit',
+    'feature_is_support_uhdr_edit',
     'feature_is_support_ai_deblur',
     'feature_is_support_ai_dereflection',
     'feature_is_support_ai_eliminate',
@@ -444,6 +448,41 @@ GALLERY_AI_FEATURE_FLAGS = (
 # APS/libAlgoProcess path, which segfaults in doIPUArcDeHazyProcess -- showing
 # the entry just hands the user a crash.
 #
+# Forced for Perfect Shot, not for HDR's own sake: local_hdr_edit + uhdr_edit.
+#
+# Perfect Shot builds its face-picker thumbnails by rendering each candidate
+# into the editor preview surface and screenshotting it. The capture reads the
+# SurfaceView, so it only sees pixels if the GPU path drew there. Off OOS the
+# whole HDR display pipeline is dark and the editor falls back to CPU frames,
+# leaving that surface empty -- one failed capture per candidate:
+#
+#   AIGallery_AIBestTakeSection: takeScreenShot: SurfaceView fetch Bitmap failed
+#
+# Measured over paired Perfect Shot runs, stock vs ours:
+#
+#   HdrTransitionScene      71  vs  0
+#   UhdrRenderer           249  vs  0
+#   Editor#ProxyGpuFrame     2  vs  0
+#   Editor#ProxyCpuFrame     2  vs 65
+#
+# The gate is HdrEditUtils.m() (com/oplus/aiunit/vision/t8b), reached from both
+# EditablePhotoPage and HdrImageScene:
+#
+#   if (feature_is_support_local_hdr_edit && d2e.o(media)) return true;
+#   if (feature_is_support_uhdr_edit      && d2e.w(media)) return true;
+#   return false;                     -> "[...] not support hdr edit"
+#
+# Both resolve false off OOS, so it always returns false. Note each flag is
+# ALSO gated on the media itself (d2e.o / d2e.w), so forcing them cannot push an
+# SDR image down the HDR path -- it only stops us claiming a CPH2653 cannot do
+# something it demonstrably does on stock.
+#
+# Evidence-based but NOT flash-verified: the causal chain from these flags to
+# the empty surface is inferred from the counts above plus the decompiled gate,
+# not observed end to end. If Perfect Shot still shows no candidates, re-check
+# whether ProxyGpuFrame/UhdrRenderer appear at all before touching anything else
+# -- if they are still 0, the gate is somewhere further upstream.
+
 # Deliberately NOT forced: feature_is_support_ipu_beauty. Same shape of bug as
 # rm_ai_deblur below -- it selects a backend rather than enabling anything, and
 # forcing it is what BROKE Retouch. MenuVM gates the model loader on it:
