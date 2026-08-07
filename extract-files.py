@@ -229,6 +229,83 @@ def blob_fixup_opluscamera_ensure_8k_30_clamp(
         print('OplusCamera: 8K@30 clamps already present (patches/0003 applied)')
 
 
+def blob_fixup_opluscamera_privapp_linker_ns(
+    ctx, file, file_path, *args, tmp_dir=None, **kwargs
+):
+    """
+    Keep OplusCamera on the system_ext priv-app linker path that can resolve
+    libvndksupport for libJniMetaTransform (capture APS meta path).
+
+    Root cause of still-capture UnsatisfiedLinkError on dodge:
+      - UPDATED_SYSTEM_APP under /data/app extracts JNI to lib/arm64/
+      - app classloader ns (clns-N) cannot see /system/lib64/libvndksupport.so
+      - working path: /system_ext/priv-app/OplusCamera/...apk!/lib/arm64-v8a/...
+        via clns-shared (priv-app)
+
+    Hardening applied on every extract:
+      1) android:extractNativeLibs="false" so PackageManager loads from the APK
+         zip entry (matches known-good ports; soong already uncompresses jni).
+      2) Drop android.permission.CONTROL_KEYGUARD — PM refuses
+         uninstall-system-updates for packages with that grant ("keyguard system
+         package"), which traps accidental adb-install updates that reintroduce
+         the data-app ns crash. Secure camera still has showWhenLocked +
+         SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE.
+    """
+    if tmp_dir is None:
+        return
+
+    manifest = Path(tmp_dir) / 'AndroidManifest.xml'
+    if not manifest.exists():
+        print('OplusCamera: warning: AndroidManifest.xml missing for linker-ns fixup')
+        return
+
+    data = manifest.read_text(encoding='utf-8')
+    original = data
+    changed = []
+
+    # Force extractNativeLibs=false on <application ...>
+    if re.search(r'android:extractNativeLibs\s*=\s*"true"', data):
+        data = re.sub(
+            r'android:extractNativeLibs\s*=\s*"true"',
+            'android:extractNativeLibs="false"',
+            data,
+            count=1,
+        )
+        changed.append('extractNativeLibs=false')
+    elif 'android:extractNativeLibs=' not in data:
+        # Insert on the application tag (first match).
+        new_data, n = re.subn(
+            r'(<application\b)(\s)',
+            r'\1 android:extractNativeLibs="false"\2',
+            data,
+            count=1,
+        )
+        if n:
+            data = new_data
+            changed.append('extractNativeLibs=false (inserted)')
+    # else already false — leave alone
+
+    # Remove CONTROL_KEYGUARD uses-permission (self-closing or paired).
+    perm_re = re.compile(
+        r'[ \t]*<uses-permission\b[^>]*android:name\s*=\s*'
+        r'"android\.permission\.CONTROL_KEYGUARD"[^>]*/>\s*\n?'
+        r'|[ \t]*<uses-permission\b[^>]*android:name\s*=\s*'
+        r'"android\.permission\.CONTROL_KEYGUARD"[^>]*>\s*'
+        r'</uses-permission>\s*\n?',
+        re.MULTILINE,
+    )
+    data2, n = perm_re.subn('', data)
+    if n:
+        data = data2
+        changed.append(f'removed CONTROL_KEYGUARD (x{n})')
+
+    if data != original:
+        manifest.write_text(data, encoding='utf-8')
+        print('OplusCamera: priv-app linker ns fixup: ' + ', '.join(changed))
+    else:
+        print('OplusCamera: priv-app linker ns fixup already applied')
+
+
 def blob_fixup_apktool_unpack_src(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
     if tmp_dir is None:
         return
@@ -1553,10 +1630,13 @@ blob_fixups: blob_fixups_user_type = {
     # 0003 120fps+8K clamp, 0004 gallery chooser). Expanded so we can run an
     # idempotent 8K ensure step after patch_dir without dropping anything.
     # Do not replace this with a subset of patches.
+    # Also force extractNativeLibs=false + drop CONTROL_KEYGUARD so capture
+    # stays on system_ext shared linker ns (libJniMetaTransform → libvndksupport).
     'system_ext/priv-app/OplusCamera/OplusCamera.apk': blob_fixup()
         .apktool_unpack('patches')
         .patch_dir('patches')
         .call(blob_fixup_opluscamera_ensure_8k_30_clamp)
+        .call(blob_fixup_opluscamera_privapp_linker_ns)
         .apktool_pack()
         .stripzip(),
     'system_ext/framework/com.oplus.camera.unit.sdk.jar': blob_fixup()
