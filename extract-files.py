@@ -380,9 +380,14 @@ def blob_fixup_aiunit_plugin_so_permissions(ctx, file, file_path, *args, tmp_dir
     # Gallery NPE path fires. Stock ships Plugin .so executable; our unzip path
     # used to leave Engine packs at mode 600.
     #
-    # Fix every FileUtil unzip call site that writes a File, not only the Plugin
-    # SO path -- engines go through unzipHashFileFromPlugin / the private unzip
-    # helper as well.
+    # Fix every FileUtil path that writes a File, not only the Plugin SO unpack:
+    #   - unzipSoFromPlugin  (Plugin .so)
+    #   - private unzip()    (unzipHashFileFromPlugin)
+    #   - copyFile()         (ZipInstaller.unzipFile -- Engine packs on first boot)
+    #   - AbsInstaller       (OAP2 install)
+    # Engine packs specifically go ZipInstaller -> unzipFile -> copyFile, so
+    # without the copyFile patch a re-extract + clean flash still leaves
+    # Engine/*.so at mode 600 and AI Eraser dies again.
     if tmp_dir is None:
         return
 
@@ -475,9 +480,79 @@ def blob_fixup_aiunit_plugin_so_permissions(ctx, file, file_path, *args, tmp_dir
         if old_ret in data:
             data = data.replace(old_ret, new_ret, 1)
 
+    # 3) copyFile(InputStream, path, overwrite) -- used by ZipInstaller.unzipFile
+    # for Engine/Detector zip packs. p1 is the dest path but is clobbered for the
+    # 0x2000 buffer size, so stash it in v5 and chmod after a successful write.
+    old_copy_open = (
+        '    invoke-direct {p2, p1}, Ljava/io/FileOutputStream;-><init>(Ljava/lang/String;)V\n'
+        '    :try_end_6b\n'
+        '    .catch Ljava/io/IOException; {:try_start_f .. :try_end_6b} :catch_52\n'
+        '\n'
+        '    .line 106\n'
+        '    .line 107\n'
+        '    .line 108\n'
+        '    const/16 p1, 0x2000\n'
+    )
+    new_copy_open = (
+        '    invoke-direct {p2, p1}, Ljava/io/FileOutputStream;-><init>(Ljava/lang/String;)V\n'
+        '    :try_end_6b\n'
+        '    .catch Ljava/io/IOException; {:try_start_f .. :try_end_6b} :catch_52\n'
+        '\n'
+        '    move-object v5, p1\n'
+        '\n'
+        '    .line 106\n'
+        '    .line 107\n'
+        '    .line 108\n'
+        '    const/16 p1, 0x2000\n'
+    )
+    old_copy_ret = (
+        '    :cond_7c\n'
+        '    const/4 p0, 0x0\n'
+        '\n'
+        '    .line 126\n'
+        '    :try_start_7d\n'
+        '    invoke-static {p2, p0}, Lkotlin/io/CloseableKt;->closeFinally(Ljava/io/Closeable;Ljava/lang/Throwable;)V\n'
+        '    :try_end_80\n'
+        '    .catch Ljava/io/IOException; {:try_start_7d .. :try_end_80} :catch_52\n'
+        '\n'
+        '    .line 127\n'
+        '    .line 128\n'
+        '    .line 129\n'
+        '    return v4\n'
+    )
+    new_copy_ret = (
+        '    :cond_7c\n'
+        '    const/4 p0, 0x0\n'
+        '\n'
+        '    .line 126\n'
+        '    :try_start_7d\n'
+        '    invoke-static {p2, p0}, Lkotlin/io/CloseableKt;->closeFinally(Ljava/io/Closeable;Ljava/lang/Throwable;)V\n'
+        '    :try_end_80\n'
+        '    .catch Ljava/io/IOException; {:try_start_7d .. :try_end_80} :catch_52\n'
+        '\n'
+        '    new-instance p0, Ljava/io/File;\n'
+        '\n'
+        '    invoke-direct {p0, v5}, Ljava/io/File;-><init>(Ljava/lang/String;)V\n'
+        '\n'
+        '    const/4 p1, 0x1\n'
+        '\n'
+        '    invoke-virtual {p0, p1}, Ljava/io/File;->setReadable(Z)Z\n'
+        '\n'
+        '    invoke-virtual {p0, p1}, Ljava/io/File;->setExecutable(Z)Z\n'
+        '\n'
+        '    .line 127\n'
+        '    .line 128\n'
+        '    .line 129\n'
+        '    return v4\n'
+    )
+    if old_copy_open in data and old_copy_ret in data:
+        data = data.replace(old_copy_open, new_copy_open, 1).replace(
+            old_copy_ret, new_copy_ret, 1
+        )
+
     smali.write_text(data, encoding='utf-8')
 
-    # 3) AbsInstaller.unzipMatchedEntryIfNeeded -- OAP2 / generic zip install
+    # 4) AbsInstaller.unzipMatchedEntryIfNeeded -- OAP2 / generic zip install
     # path also writes without +x. Stash File before it is clobbered.
     abs_smali = Path(tmp_dir) / 'smali_classes2/com/oplus/orange/install/AbsInstaller.smali'
     if abs_smali.exists():
