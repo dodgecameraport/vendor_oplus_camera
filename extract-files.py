@@ -373,6 +373,16 @@ def blob_fixup_aiunit_authorize_camera(ctx, file, file_path, *args, tmp_dir=None
 
 
 def blob_fixup_aiunit_plugin_so_permissions(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
+    # AIUnit unpacks Engine/Plugin native libs under app data. SELinux allows
+    # execute on oplus_aiunit_data_file, but the files must also have the +x bit
+    # or dlopen fails with "couldn't map ... Permission denied". Without that,
+    # image_mask_contour (AI Eraser) returns empty ContourPoints in 0ms and the
+    # Gallery NPE path fires. Stock ships Plugin .so executable; our unzip path
+    # used to leave Engine packs at mode 600.
+    #
+    # Fix every FileUtil unzip call site that writes a File, not only the Plugin
+    # SO path -- engines go through unzipHashFileFromPlugin / the private unzip
+    # helper as well.
     if tmp_dir is None:
         return
 
@@ -380,7 +390,9 @@ def blob_fixup_aiunit_plugin_so_permissions(ctx, file, file_path, *args, tmp_dir
     if not smali.exists():
         return
     data = smali.read_text(encoding='utf-8')
-    old = (
+
+    # 1) Plugin SO unpack (historical site). Idempotent if already present.
+    old_plugin = (
         '    invoke-static {v2, v9, v10}, Lcom/oplus/orange/utils/FileUtil;->unzip(Ljava/util/zip/ZipFile;Ljava/util/zip/ZipEntry;Ljava/io/File;)V\n'
         '\n'
         '    .line 218\n'
@@ -388,7 +400,7 @@ def blob_fixup_aiunit_plugin_so_permissions(ctx, file, file_path, *args, tmp_dir
         '    .line 220\n'
         '    const/4 v9, 0x0\n'
     )
-    new = (
+    new_plugin = (
         '    invoke-static {v2, v9, v10}, Lcom/oplus/orange/utils/FileUtil;->unzip(Ljava/util/zip/ZipFile;Ljava/util/zip/ZipEntry;Ljava/io/File;)V\n'
         '\n'
         '    const/4 v9, 0x1\n'
@@ -402,9 +414,128 @@ def blob_fixup_aiunit_plugin_so_permissions(ctx, file, file_path, *args, tmp_dir
         '    .line 220\n'
         '    const/4 v9, 0x0\n'
     )
-    fixed = data.replace(old, new, 1)
-    if fixed != data:
-        smali.write_text(fixed, encoding='utf-8')
+    if old_plugin in data:
+        data = data.replace(old_plugin, new_plugin, 1)
+
+    # 2) Private unzip() -- used by unzipHashFileFromPlugin (engine/detector
+    # packs). p2 is the destination File but is clobbered mid-method, so stash
+    # it in v2 and chmod before the success return. Bump .registers 5 -> 6.
+    old_priv = (
+        '.method private static final unzip(Ljava/util/zip/ZipFile;Ljava/util/zip/ZipEntry;Ljava/io/File;)V\n'
+        '    .registers 5\n'
+    )
+    new_priv = (
+        '.method private static final unzip(Ljava/util/zip/ZipFile;Ljava/util/zip/ZipEntry;Ljava/io/File;)V\n'
+        '    .registers 6\n'
+    )
+    if old_priv in data:
+        data = data.replace(old_priv, new_priv, 1)
+    if 'move-object v2, p2' not in data:
+        old_stash = (
+            '    :cond_28\n'
+            '    invoke-virtual {p0, p1}, Ljava/util/zip/ZipFile;->getInputStream(Ljava/util/zip/ZipEntry;)Ljava/io/InputStream;\n'
+        )
+        new_stash = (
+            '    :cond_28\n'
+            '    move-object v2, p2\n'
+            '\n'
+            '    invoke-virtual {p0, p1}, Ljava/util/zip/ZipFile;->getInputStream(Ljava/util/zip/ZipEntry;)Ljava/io/InputStream;\n'
+        )
+        if old_stash in data:
+            data = data.replace(old_stash, new_stash, 1)
+    if 'invoke-virtual {v2, v0}, Ljava/io/File;->setExecutable' not in data:
+        old_ret = (
+            '    invoke-static {p0, v1}, Lkotlin/io/CloseableKt;->closeFinally(Ljava/io/Closeable;Ljava/lang/Throwable;)V\n'
+            '\n'
+            '    .line 63\n'
+            '    .line 64\n'
+            '    .line 65\n'
+            '    return-void\n'
+            '\n'
+            '    .line 66\n'
+            '    :catchall_41\n'
+        )
+        new_ret = (
+            '    invoke-static {p0, v1}, Lkotlin/io/CloseableKt;->closeFinally(Ljava/io/Closeable;Ljava/lang/Throwable;)V\n'
+            '\n'
+            '    const/4 v0, 0x1\n'
+            '\n'
+            '    invoke-virtual {v2, v0}, Ljava/io/File;->setReadable(Z)Z\n'
+            '\n'
+            '    invoke-virtual {v2, v0}, Ljava/io/File;->setExecutable(Z)Z\n'
+            '\n'
+            '    .line 63\n'
+            '    .line 64\n'
+            '    .line 65\n'
+            '    return-void\n'
+            '\n'
+            '    .line 66\n'
+            '    :catchall_41\n'
+        )
+        if old_ret in data:
+            data = data.replace(old_ret, new_ret, 1)
+
+    smali.write_text(data, encoding='utf-8')
+
+    # 3) AbsInstaller.unzipMatchedEntryIfNeeded -- OAP2 / generic zip install
+    # path also writes without +x. Stash File before it is clobbered.
+    abs_smali = Path(tmp_dir) / 'smali_classes2/com/oplus/orange/install/AbsInstaller.smali'
+    if abs_smali.exists():
+        adata = abs_smali.read_text(encoding='utf-8')
+        if 'setExecutable' not in adata:
+            old_abs = (
+                '    :cond_54\n'
+                '    new-instance p2, Ljava/io/FileOutputStream;\n'
+                '\n'
+                '    .line 86\n'
+                '    .line 87\n'
+                '    invoke-direct {p2, p0}, Ljava/io/FileOutputStream;-><init>(Ljava/io/File;)V\n'
+                '\n'
+                '    .line 88\n'
+                '    .line 89\n'
+                '    .line 90\n'
+                '    const/4 p0, 0x0\n'
+            )
+            new_abs = (
+                '    :cond_54\n'
+                '    move-object v0, p0\n'
+                '\n'
+                '    new-instance p2, Ljava/io/FileOutputStream;\n'
+                '\n'
+                '    .line 86\n'
+                '    .line 87\n'
+                '    invoke-direct {p2, p0}, Ljava/io/FileOutputStream;-><init>(Ljava/io/File;)V\n'
+                '\n'
+                '    .line 88\n'
+                '    .line 89\n'
+                '    .line 90\n'
+                '    const/4 p0, 0x0\n'
+            )
+            old_abs_ret = (
+                '    invoke-static {p2, p4}, Lkotlin/io/CloseableKt;->closeFinally(Ljava/io/Closeable;Ljava/lang/Throwable;)V\n'
+                '\n'
+                '    .line 97\n'
+                '    .line 98\n'
+                '    .line 99\n'
+                '    goto :goto_6a\n'
+            )
+            new_abs_ret = (
+                '    invoke-static {p2, p4}, Lkotlin/io/CloseableKt;->closeFinally(Ljava/io/Closeable;Ljava/lang/Throwable;)V\n'
+                '\n'
+                '    const/4 p1, 0x1\n'
+                '\n'
+                '    invoke-virtual {v0, p1}, Ljava/io/File;->setReadable(Z)Z\n'
+                '\n'
+                '    invoke-virtual {v0, p1}, Ljava/io/File;->setExecutable(Z)Z\n'
+                '\n'
+                '    .line 97\n'
+                '    .line 98\n'
+                '    .line 99\n'
+                '    goto :goto_6a\n'
+            )
+            if old_abs in adata and old_abs_ret in adata:
+                adata = adata.replace(old_abs, new_abs, 1).replace(old_abs_ret, new_abs_ret, 1)
+                abs_smali.write_text(adata, encoding='utf-8')
 
 
 # <kind>-<unitName>-<unitId>-<unitVersion>[-<variant>][.apk]
