@@ -78,6 +78,157 @@ def _replace_smali_method(data: str, signature: str, body: str) -> str:
     )
 
 
+def _smali_method(data: str, signature: str):
+    return re.search(
+        rf'(?ms)^(\.method[^\n]* {re.escape(signature)}\n)(.*?)(^\.end method)',
+        data,
+    )
+
+
+def blob_fixup_opluscamera_ensure_8k_30_clamp(
+    ctx, file, file_path, *args, tmp_dir=None, **kwargs
+):
+    """
+    Idempotent safety net for the 8K@30 clamp from patches/0003.
+
+    Does NOT remove or rewrite 120fps, gallery chooser, font, or manifest
+    patches. Only injects the three clamp sites if a stock drift / partial
+    patch leave them missing after patch_dir('patches').
+    """
+    if tmp_dir is None:
+        return
+
+    root = Path(tmp_dir)
+    changed = False
+
+    # --- yj/o0.smali: A(II)V setVideoSize path + v(CamcorderProfile) record path ---
+    o0_path = root / 'smali_classes12' / 'yj' / 'o0.smali'
+    if o0_path.exists():
+        data = o0_path.read_text(encoding='utf-8')
+        original = data
+
+        # A(II)V: after setVideoSize, if width >= 7680 (0x1e00) force y(30).
+        m = _smali_method(data, 'A(II)V')
+        if m and '0x1e00' not in m.group(2):
+            # Keep .registers / .locals line as-is; inject after the first
+            # directive block so we do not drop any existing method body.
+            head, body, end = m.group(1), m.group(2), m.group(3)
+            # Prefer raising .registers if present and too small for v0 reuse.
+            # Body already uses v0/v1; clamp reuses v0 only before original body.
+            inject = (
+                '    const/16 v0, 0x1e00\n'
+                '\n'
+                '    if-lt p1, v0, :cond_oplus_8k_a\n'
+                '\n'
+                '    const/16 v0, 0x1e\n'
+                '\n'
+                '    invoke-virtual {p0, v0}, Lyj/o0;->y(I)V\n'
+                '\n'
+                '    :cond_oplus_8k_a\n'
+            )
+            # If method starts with .registers/.locals/.annotation, insert after
+            # the opening prologue lines.
+            prologue = re.match(
+                r'(?ms)^((?:[ \t]*\.(?:registers|locals|param|annotation|prologue|line)[^\n]*\n|'
+                r'[ \t]*\.end annotation\n|\n)*)',
+                body,
+            )
+            if prologue and prologue.group(1):
+                body = prologue.group(1) + inject + body[prologue.end(1) :]
+            else:
+                body = inject + body
+            data = data[: m.start()] + head + body + end + data[m.end() :]
+
+        # v(CamcorderProfile;): clamp videoFrameRate when width >= 8K.
+        m = _smali_method(data, 'v(Landroid/media/CamcorderProfile;)V')
+        if m and '0x1e00' not in m.group(2):
+            head, body, end = m.group(1), m.group(2), m.group(3)
+            inject = (
+                '    iget v0, p1, Landroid/media/CamcorderProfile;->videoFrameWidth:I\n'
+                '\n'
+                '    const/16 v1, 0x1e00\n'
+                '\n'
+                '    if-lt v0, v1, :cond_oplus_8k_v\n'
+                '\n'
+                '    iget v0, p1, Landroid/media/CamcorderProfile;->videoFrameRate:I\n'
+                '\n'
+                '    const/16 v1, 0x1e\n'
+                '\n'
+                '    if-le v0, v1, :cond_oplus_8k_v\n'
+                '\n'
+                '    iput v1, p1, Landroid/media/CamcorderProfile;->videoFrameRate:I\n'
+                '\n'
+                '    :cond_oplus_8k_v\n'
+            )
+            prologue = re.match(
+                r'(?ms)^((?:[ \t]*\.(?:registers|locals|param|annotation|prologue|line)[^\n]*\n|'
+                r'[ \t]*\.end annotation\n|\n)*)',
+                body,
+            )
+            if prologue and prologue.group(1):
+                body = prologue.group(1) + inject + body[prologue.end(1) :]
+            else:
+                body = inject + body
+            data = data[: m.start()] + head + body + end + data[m.end() :]
+
+        if data != original:
+            o0_path.write_text(data, encoding='utf-8')
+            changed = True
+            print('OplusCamera: ensured 8K clamps in yj/o0.smali')
+
+    # --- ia/i.smali buildSession: force video_30fps when size is video_size_8k ---
+    # Patch 0003 inserts this just before VIDEO_FPS is written. If missing, inject
+    # the same block in front of the first VIDEO_FPS ConfigureKey sget.
+    i_path = root / 'smali_classes28' / 'ia' / 'i.smali'
+    if i_path.exists():
+        data = i_path.read_text(encoding='utf-8')
+        if 'video_size_8k' not in data:
+            marker = (
+                'sget-object v1, Lcom/oplus/ocs/camera/CameraParameter;->'
+                'VIDEO_FPS:Lcom/oplus/ocs/camera/CameraParameter$ConfigureKey;'
+            )
+            # Also match slightly different local registers used in some builds.
+            marker_re = re.compile(
+                r'([ \t]*sget-object v\d+, '
+                r'Lcom/oplus/ocs/camera/CameraParameter;->VIDEO_FPS:'
+                r'Lcom/oplus/ocs/camera/CameraParameter\$ConfigureKey;\n)'
+            )
+            inject = (
+                '    invoke-virtual/range {p0 .. p0}, Lia/i;->p1()Ljava/lang/String;\n'
+                '\n'
+                '    move-result-object v1\n'
+                '\n'
+                '    const-string v2, "video_size_8k"\n'
+                '\n'
+                '    invoke-virtual {v2, v1}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z\n'
+                '\n'
+                '    move-result v1\n'
+                '\n'
+                '    if-eqz v1, :cond_oplus_8k_sess\n'
+                '\n'
+                '    const-string v11, "video_30fps"\n'
+                '\n'
+                '    :cond_oplus_8k_sess\n'
+                '\n'
+            )
+            new_data, n = marker_re.subn(inject + r'\1', data, count=1)
+            if n:
+                i_path.write_text(new_data, encoding='utf-8')
+                changed = True
+                print('OplusCamera: ensured 8K session clamp in ia/i.smali')
+            else:
+                print(
+                    'OplusCamera: warning: could not find VIDEO_FPS site for '
+                    '8K session clamp (patch 0003 may have different layout)'
+                )
+        else:
+            # Already present (from 0003) — leave untouched.
+            pass
+
+    if not changed:
+        print('OplusCamera: 8K@30 clamps already present (patches/0003 applied)')
+
+
 def blob_fixup_apktool_unpack_src(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
     if tmp_dir is None:
         return
@@ -1192,8 +1343,16 @@ def blob_fixup_aon_disable_ezpay_settings(ctx, file, file_path, *args, tmp_dir=N
 
 
 blob_fixups: blob_fixups_user_type = {
+    # OplusCamera: keep EVERY patch under patches/ (0001 font, 0002 manifest,
+    # 0003 120fps+8K clamp, 0004 gallery chooser). Expanded so we can run an
+    # idempotent 8K ensure step after patch_dir without dropping anything.
+    # Do not replace this with a subset of patches.
     'system_ext/priv-app/OplusCamera/OplusCamera.apk': blob_fixup()
-        .apktool_patch('patches'),
+        .apktool_unpack('patches')
+        .patch_dir('patches')
+        .call(blob_fixup_opluscamera_ensure_8k_30_clamp)
+        .apktool_pack()
+        .stripzip(),
     'system_ext/framework/com.oplus.camera.unit.sdk.jar': blob_fixup()
         .apktool_patch('patches-sdk'),
     # apktool_patch() expanded so the AI feature flags can be forced after the
