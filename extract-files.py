@@ -422,6 +422,14 @@ GALLERY_AI_FEATURE_FLAGS = (
     # what put the ProXDR badge on an HDR photo. See the note below.
     'feature_is_support_local_hdr',
     'feature_is_support_ultra_hdr',
+    # The third conjunct of that same badge gate (BrightenViewModel.k, read as
+    # e26.f(6, "local_hdr_switch_read", false)). It is NOT the "View with
+    # ProXDR" toggle -- that one is local_hdr_switch, a userProfile pref that
+    # already works and reads back true on device. local_hdr_switch_read is a
+    # separate ConfigAbility node fed by a ColorOS provider we do not have, so
+    # it stays false and o() never inflates R.id.vs_proxdr however the toggle is
+    # set. Forcing it makes that toggle cosmetic as far as the badge goes.
+    'local_hdr_switch_read',
     'feature_is_support_ai_deblur',
     'feature_is_support_ai_dereflection',
     'feature_is_support_ai_eliminate',
@@ -751,6 +759,51 @@ GALLERY_MODEL_ENDPOINT = 'https://fourier-videoclip-cn.allawntech.com'
 # RealmeRestrictWatermarkMetadataRequest, none of which are on the AI model path.
 # Its real value is not in the dump (these keys are cloud-pushed, not shipped in
 # my_product/etc/extension), so there is nothing to set it to but a guess.
+
+
+def blob_fixup_gallery_besttake_bitmaps_transient(
+    ctx, file, file_path, *args, tmp_dir=None, **kwargs
+):
+    # AI Perfect Shot: the candidate strip populates (that was the missing
+    # OplusScreenShotOptions class), but tapping a face failed with "Failed to
+    # replace facial expression. Try again later." and left nothing behind -- no
+    # AIError_, no FrameDetector "process: errorCode" line, and no [process]
+    # line from AIFacePlugin, i.e. the IPC never happened at all.
+    #
+    # AIFaceInputSlot.bestTake() hands each bitmap to the unit out of band via
+    # setTargetBitmap("src_face_list[i]" / "dst_face_list[i]") and only then
+    # runs Gson().toJson(groupInfoList). AIFaceGroupInfo still holds those same
+    # bitmaps in non-transient srcImage/dstImage fields, so Gson reflects into
+    # android.graphics.Bitmap and walks its internals until it reaches a
+    # java.lang.Class, where Gson 2.10.1 hard-throws ("Attempted to serialize
+    # java.lang.Class"). AIConnector.runAction wraps action.run() in a
+    # runCatching whose failure branch only calls Action.failure() -- it never
+    # logs -- so the throw is swallowed whole, bestTake() falls back to an empty
+    # list and the VM reports the generic OPTIMIZING_FAIL. It never reaches the
+    # network, so this is not the cloud gate it looks like.
+    #
+    # The working detection path (filtrateFace) uses the identical Gson call on
+    # AIFaceInfo, which carries PointF[]/Rect but no Bitmap -- that is the only
+    # structural difference between the two.
+    #
+    # Gson's default Excluder skips transient fields, and the plugin reads the
+    # bitmaps back by tag (getAiFaceBitmap -> ParamPackage.getParamCallback),
+    # never out of the JSON, so dropping them from the payload loses nothing.
+    if tmp_dir is None:
+        return
+
+    for smali in Path(tmp_dir).glob(
+        'smali_classes*/com/oplus/aiunit/open/aiface/plugin/AIFaceGroupInfo.smali'
+    ):
+        data = smali.read_text(encoding='utf-8')
+        fixed = data
+        for field in ('srcImage', 'dstImage'):
+            fixed = fixed.replace(
+                f'.field private {field}:Landroid/graphics/Bitmap;',
+                f'.field private transient {field}:Landroid/graphics/Bitmap;',
+            )
+        if fixed != data:
+            smali.write_text(fixed, encoding='utf-8')
 
 
 def blob_fixup_gallery_model_endpoint(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
@@ -1149,6 +1202,7 @@ blob_fixups: blob_fixups_user_type = {
         .apktool_unpack('patches-gallery')
         .patch_dir('patches-gallery')
         .call(blob_fixup_gallery_force_ai_flags)
+        .call(blob_fixup_gallery_besttake_bitmaps_transient)
         .call(blob_fixup_gallery_model_endpoint)
         .call(blob_fixup_gallery_component_versions)
         .apktool_pack()
