@@ -1115,16 +1115,26 @@ def blob_fixup_gallery_force_ai_flags(ctx, file, file_path, *args, tmp_dir=None,
     if tmp_dir is None:
         return
 
-    # The class name is obfuscated and moves between blobs (c25 -> e26 so far),
-    # so find the file by the anchor 0005 leaves behind rather than by name.
+    # The class name is obfuscated and moves between blobs (c25 -> e26 -> g19 so
+    # far), so find the file by the anchor 0005 leaves behind rather than by name.
+    #
+    # Note smali*/ and not smali_classes*/: in 16.40.8 the class landed in
+    # classes.dex, which apktool unpacks to a plain smali/. Globbing only
+    # smali_classes*/ silently found nothing and left all the AI flags unforced
+    # while the extract still reported success.
     root = Path(tmp_dir)
     smali = None
-    for candidate in sorted(root.glob('smali_classes*/com/oplus/**/*.smali')):
+    for candidate in sorted(root.glob('smali*/com/oplus/**/*.smali')):
         if GALLERY_OLIVE_ANCHOR in candidate.read_text(encoding='utf-8'):
             smali = candidate
             break
     if smali is None:
-        return
+        raise RuntimeError(
+            'gallery: the 0005 olive anchor is missing, so the AI feature flags '
+            'cannot be forced. patches-gallery/0005 has almost certainly stopped '
+            'applying against this blob -- fix it rather than shipping a Gallery '
+            'whose AI menu is silently empty.'
+        )
 
     data = smali.read_text(encoding='utf-8')
     if 'cond_force_ai_true' in data:
