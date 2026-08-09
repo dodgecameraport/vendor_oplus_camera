@@ -5,27 +5,21 @@ Subject: [PATCH 2/4] VibrateUtils: Switch to standard EFFECT_DOUBLE_CLICK
 
 E AndroidRuntime: java.lang.NullPointerException: null cannot be cast to non-null type com.oplus.os.LinearmotorVibrator
 ---
- .../gallery/addon/os/VibratorUtils.smali      | 177 +++++-------------
- 1 file changed, 48 insertions(+), 129 deletions(-)
 
-diff --git a/smali_classes7/com/oplus/gallery/addon/os/VibratorUtils.smali b/smali_classes7/com/oplus/gallery/addon/os/VibratorUtils.smali
-index b6da580..4cb6f8a 100644
---- a/smali_classes7/com/oplus/gallery/addon/os/VibratorUtils.smali
-+++ b/smali_classes7/com/oplus/gallery/addon/os/VibratorUtils.smali
-@@ -1092,7 +1092,7 @@
+diff --git a/smali/com/oplus/gallery/addon/os/VibratorUtils.smali b/smali/com/oplus/gallery/addon/os/VibratorUtils.smali
+--- a/smali/com/oplus/gallery/addon/os/VibratorUtils.smali
++++ b/smali/com/oplus/gallery/addon/os/VibratorUtils.smali
+@@ -877,152 +877,70 @@
  .end method
  
  .method public static final i(Landroid/content/Context;Lcom/oplus/gallery/addon/os/VibratorUtils$EffectType;)V
 -    .locals 2
 +    .locals 4
-     .annotation build Landroid/annotation/SuppressLint;
-         value = {
-             "WrongConstant"
-@@ -1103,147 +1103,66 @@
+     .annotation runtime Lkotlin/jvm/JvmStatic;
      .end annotation
  
      .line 1
--    sget-object v0, Lcom/oplus/gallery/addon/os/VibratorUtils;->d:Lcom/oplus/aiunit/vision/nyc;
+-    sget-object v0, Lcom/oplus/gallery/addon/os/VibratorUtils;->d:Lcom/oplus/aiunit/vision/rnk;
 +    const-string v0, "context"
 +    invoke-static {p0, v0}, Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter(Ljava/lang/Object;Ljava/lang/String;)V
 +    const-string v0, "type"
@@ -51,10 +45,34 @@ index b6da580..4cb6f8a 100644
 +    goto :goto_0
  
      .line 4
--    .line 5
--    new-instance v0, Lcom/oplus/aiunit/vision/nyc;
--
--    .line 6
++    :cond_0
++    const/4 v0, 0x4
++    invoke-static {v0}, Landroid/os/VibrationEffect;->createPredefined(I)Landroid/os/VibrationEffect;
++    move-result-object v0
++    :try_start_0
++    invoke-virtual {p0, v0}, Landroid/os/Vibrator;->vibrate(Landroid/os/VibrationEffect;)V
++    :try_end_0
++    .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
++    goto :goto_1
++
++    :catch_0
++    move-exception p0
++    const-string v0, "VibratorUtils"
++    const-string v1, "Failed to vibrate with EFFECT_DOUBLE_CLICK"
++    invoke-static {v0, v1, p0}, Lcom/oplus/aiunit/vision/vaz;->b(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
++    goto :goto_1
++
+     .line 5
+-    new-instance v0, Lcom/oplus/aiunit/vision/rnk;
++    :cond_1
++    :goto_0
++    const-string p0, "VibratorUtils"
++    const-string v0, "Vibrator not available or has no vibrator"
++    const/4 v1, 0x0
++    invoke-static {p0, v0, v1}, Lcom/oplus/aiunit/vision/vaz;->b(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
++    return-void
+ 
+     .line 6
 -    .line 7
 -    const-string v1, "context"
 -
@@ -70,17 +88,17 @@ index b6da580..4cb6f8a 100644
 -    .line 13
 -    .line 14
 -    .line 15
--    invoke-virtual {v0, p0}, Lcom/oplus/aiunit/vision/nyc;->a(Landroid/content/Context;)V
+-    invoke-virtual {v0, p0}, Lcom/oplus/aiunit/vision/rnk;->a(Landroid/content/Context;)V
 -
 -    .line 16
 -    .line 17
 -    .line 18
--    sput-object v0, Lcom/oplus/gallery/addon/os/VibratorUtils;->d:Lcom/oplus/aiunit/vision/nyc;
+-    sput-object v0, Lcom/oplus/gallery/addon/os/VibratorUtils;->d:Lcom/oplus/aiunit/vision/rnk;
 -
 -    .line 19
 -    .line 20
-     :cond_0
--    sget-object p0, Lcom/oplus/gallery/addon/os/VibratorUtils;->d:Lcom/oplus/aiunit/vision/nyc;
+-    :cond_0
+-    sget-object p0, Lcom/oplus/gallery/addon/os/VibratorUtils;->d:Lcom/oplus/aiunit/vision/rnk;
 -
 -    .line 21
 -    .line 22
@@ -125,15 +143,8 @@ index b6da580..4cb6f8a 100644
 -
 -    .line 40
 -    .line 41
-     const/4 v0, 0x4
-+    invoke-static {v0}, Landroid/os/VibrationEffect;->createPredefined(I)Landroid/os/VibrationEffect;
-+    move-result-object v0
-+    :try_start_0
-+    invoke-virtual {p0, v0}, Landroid/os/Vibrator;->vibrate(Landroid/os/VibrationEffect;)V
-+    :try_end_0
-+    .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
-+    goto :goto_1
- 
+-    const/4 v0, 0x4
+-
 -    .line 42
 -    if-eq p1, v0, :cond_2
 -
@@ -146,21 +157,16 @@ index b6da580..4cb6f8a 100644
 -
 -    .line 46
 -    .line 47
--    const/4 v0, 0x0
++    :cond_2
++    const-string p0, "VibratorUtils"
++    const-string p1, "the current device does not enable vibration"
+     const/4 v0, 0x0
 -
 -    .line 48
 -    goto :goto_0
-+    :catch_0
-+    move-exception p0
-+    const-string v0, "VibratorUtils"
-+    const-string v1, "Failed to vibrate with EFFECT_DOUBLE_CLICK"
-+    const/4 v2, 0x0
-+    invoke-static {v0, v1, p0}, Lcom/oplus/aiunit/vision/cpe;->c(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
-+    goto :goto_1
- 
+-
 -    .line 49
-+    .line 5
-     :cond_1
+-    :cond_1
 -    new-instance p0, Lkotlin/NoWhenBranchMatchedException;
 -
 -    .line 50
@@ -171,16 +177,9 @@ index b6da580..4cb6f8a 100644
 -    .line 53
 -    .line 54
 -    throw p0
-+    :goto_0
-+    const-string p0, "VibratorUtils"
-+    const-string v0, "Vibrator not available or has no vibrator"
-+    const/4 v1, 0x0
-+    invoke-static {p0, v0, v1}, Lcom/oplus/aiunit/vision/cpe;->c(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
-+    return-void
- 
+-
 -    .line 55
-+    .line 6
-     :cond_2
+-    :cond_2
 -    const/16 v0, 0x32
 -
 -    .line 56
@@ -202,20 +201,17 @@ index b6da580..4cb6f8a 100644
 -    .line 62
 -    :cond_5
 -    :goto_0
--    invoke-virtual {p0, v0}, Lcom/oplus/aiunit/vision/nyc;->b(I)V
-+    const-string p0, "VibratorUtils"
-+    const-string p1, "the current device does not enable vibration"
-+    const/4 v0, 0x0
-+    invoke-static {p0, p1, v0}, Lcom/oplus/aiunit/vision/cpe;->c(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
-+    return-void
- 
+-    invoke-virtual {p0, v0}, Lcom/oplus/aiunit/vision/rnk;->b(I)V
+-
 -    .line 63
 -    .line 64
 -    .line 65
 -    :cond_6
++    invoke-static {p0, p1, v0}, Lcom/oplus/aiunit/vision/vaz;->b(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
++    return-void
++
 +    :goto_1
      return-void
  .end method
 -- 
 2.54.0
-

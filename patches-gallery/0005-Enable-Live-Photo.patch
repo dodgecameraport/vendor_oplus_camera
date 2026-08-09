@@ -4,14 +4,11 @@ Date: Tue, 21 Jul 2026 20:32:02 -0700
 Subject: [PATCH] Enable Live Photo
 
 ---
- .../com/oplus/aiunit/vision/e26.smali         | 41 +++++++++++++++++++
- 1 file changed, 41 insertions(+)
 
-diff --git a/smali_classes8/com/oplus/aiunit/vision/e26.smali b/smali_classes8/com/oplus/aiunit/vision/e26.smali
-index 03464ed..47cf5a3 100644
---- a/smali_classes8/com/oplus/aiunit/vision/e26.smali
-+++ b/smali_classes8/com/oplus/aiunit/vision/e26.smali
-@@ -217,6 +217,47 @@
+diff --git a/smali/com/oplus/aiunit/vision/g19.smali b/smali/com/oplus/aiunit/vision/g19.smali
+--- a/smali/com/oplus/aiunit/vision/g19.smali
++++ b/smali/com/oplus/aiunit/vision/g19.smali
+@@ -197,6 +197,47 @@
      .annotation runtime Lkotlin/jvm/JvmStatic;
      .end annotation
  
@@ -60,5 +57,4 @@ index 03464ed..47cf5a3 100644
      const-string v0, "configId"
  
 -- 
-2.55.0
-
+2.54.0

@@ -4,25 +4,20 @@ Date: Tue, 26 May 2026 17:21:52 +0800
 Subject: [PATCH 1/2] Use default font instead of OPlus specific ones
 
 ---
- smali/s7/t3.smali | 293 +---------------------------------------------
- 1 file changed, 3 insertions(+), 290 deletions(-)
 
-diff --git a/smali/s7/t3.smali b/smali/s7/t3.smali
-index 2d10733..dd68b4e 100644
---- a/smali/s7/t3.smali
-+++ b/smali/s7/t3.smali
+diff --git a/smali/t7/y3.smali b/smali/t7/y3.smali
+--- a/smali/t7/y3.smali
++++ b/smali/t7/y3.smali
 @@ -263,300 +263,13 @@
  .end method
  
  .method public static a(Landroid/content/Context;)Landroid/graphics/Typeface;
 -    .locals 6
-+    .locals 1
- 
-     .line 1
--    sget-object v0, Ls7/i0;->a:Landroid/graphics/Typeface;
-+    sget-object v0, Landroid/graphics/Typeface;->DEFAULT:Landroid/graphics/Typeface;
- 
-     .line 2
+-
+-    .line 1
+-    sget-object v0, Lt7/l0;->a:Landroid/graphics/Typeface;
+-
+-    .line 2
 -    .line 3
 -    if-nez v0, :cond_2
 -
@@ -121,7 +116,7 @@ index 2d10733..dd68b4e 100644
 -    .line 48
 -    .line 49
 -    :try_start_1
--    sget-boolean v3, Ls7/t3;->q:Z
+-    sget-boolean v3, Lt7/y3;->q:Z
 -
 -    .line 50
 -    .line 51
@@ -202,7 +197,7 @@ index 2d10733..dd68b4e 100644
 -
 -    .line 87
 -    :cond_0
--    sget-boolean p0, Ls7/t3;->q:Z
+-    sget-boolean p0, Lt7/y3;->q:Z
 -
 -    .line 88
 -    .line 89
@@ -248,7 +243,7 @@ index 2d10733..dd68b4e 100644
 -
 -    .line 106
 -    .line 107
--    invoke-static {v0, v1, p0}, Lk8/a;->i(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
+-    invoke-static {v0, v1, p0}, Ll8/a;->i(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
 -    :try_end_2
 -    .catch Ljava/lang/NoSuchFieldError; {:try_start_2 .. :try_end_2} :catch_0
 -    .catch Ljava/lang/NoSuchMethodError; {:try_start_2 .. :try_end_2} :catch_0
@@ -294,27 +289,32 @@ index 2d10733..dd68b4e 100644
 -    move-result-object p0
 -
 -    .line 129
--    invoke-static {v0, p0}, Lk8/a;->h(Ljava/lang/String;Ljava/lang/String;)V
+-    invoke-static {v0, p0}, Ll8/a;->h(Ljava/lang/String;Ljava/lang/String;)V
 -
 -    .line 130
 -    .line 131
 -    .line 132
 -    :cond_1
 -    :goto_2
--    sput-object v2, Ls7/i0;->a:Landroid/graphics/Typeface;
+-    sput-object v2, Lt7/l0;->a:Landroid/graphics/Typeface;
 -
 -    .line 133
 -    .line 134
 -    :cond_2
--    sget-object p0, Ls7/i0;->a:Landroid/graphics/Typeface;
+-    sget-object p0, Lt7/l0;->a:Landroid/graphics/Typeface;
 -
 -    .line 135
 -    .line 136
 -    return-object p0
++    .locals 1
++
++    .line 1
++    sget-object v0, Landroid/graphics/Typeface;->DEFAULT:Landroid/graphics/Typeface;
++
++    .line 2
 +    return-object v0
  .end method
  
  .method public static b()Landroid/graphics/Typeface;
 -- 
 2.54.0
-
