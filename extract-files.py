@@ -856,6 +856,9 @@ GALLERY_AI_FEATURE_FLAGS = (
     # what put the ProXDR badge on an HDR photo. See the note below.
     'feature_is_support_local_hdr',
     'feature_is_support_ultra_hdr',
+    # 10-bit decode: ta00 reads this through g19.d -> g19.c, the same method this
+    # chain patches, so forcing it here is all that is needed.
+    'feature_is_support_10bit_decode',
     # The third conjunct of that same badge gate (BrightenViewModel.k, read as
     # e26.f(6, "local_hdr_switch_read", false)). It is NOT the "View with
     # ProXDR" toggle -- that one is local_hdr_switch, a userProfile pref that
