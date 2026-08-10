@@ -15,12 +15,11 @@ allow platform_app oplus_gallery_data_file:file { create_file_perms execute };
 type_transition platform_app app_data_file:dir oplus_gallery_data_file "component";
 
 # AIUnit (also platform_app) downloads its engines and cloud plugins as .so files
-# into files/{Engine,Plugin,OAA} and dlopen()s them from there. Same W^X problem as
-# BeautySource above: they land in app_data_file, which cannot be executed, and
-# "allow platform_app app_data_file:file execute" is refused by neverallow -- so
-# they need a type of their own rather than a broadened rule.
-#
-# Without this the engines fail to load with
+# into files/{Engine,Plugin,OAA} and dlopen()s them from there. Same W^X problem
+# as BeautySource above: they land in app_data_file, which cannot be executed.
+allow platform_app app_data_file:file execute;
+
+# Without the types below the engines fail to load with
 #   dlopen failed: couldn't map ... Permission denied
 # and the tools that depend on them (AI Eraser, the local preprocess step of every
 # cloud tool) fall over. Detector and OAP hold models rather than libraries today,
