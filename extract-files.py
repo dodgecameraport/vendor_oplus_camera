@@ -10,9 +10,11 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import List, NamedTuple, Tuple
 
 from extract_utils.fixups_lib import (
     lib_fixups,
@@ -30,7 +32,7 @@ from extract_utils.tools import (
     apktool_path,
     java_path,
 )
-from extract_utils.utils import run_cmd
+from extract_utils.utils import Color, color_print, run_cmd
 
 
 def lib_fixup_system_ext_suffix(lib: str, partition: str, *args, **kwargs):
@@ -1442,50 +1444,114 @@ def blob_fixup_stdid_receiver_flags(ctx, file, file_path, *args, tmp_dir=None, *
 
 
 
-def blob_fixup_aiunit_disable_settings(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
-    """Keep AIUnit for Camera/Gallery; do not inject into system Settings."""
+def blob_fixup_aiunit_si_preference_roots(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
+    """Google SI requires root <PreferenceScreen>, not androidx.preference.PreferenceScreen.
+
+    AIUnit ships COUI preference XMLs with the androidx root. That is fine for
+    Oplus Settings, but Settings Intelligence hard-crashes while indexing:
+      XML document must start with <PreferenceScreen> tag; found
+      androidx.preference.PreferenceScreen ... fragment_ai_service_platform
+    Camera/Gallery AI paths do not use these XMLs. Only rewrite when res/xml is
+    present (full apktool decode); --no-res extracts skip this safely.
+    """
     if tmp_dir is None:
         return
+    xml_dir = Path(tmp_dir) / 'res' / 'xml'
+    if not xml_dir.is_dir():
+        return
+    changed = 0
+    for path in xml_dir.glob('fragment*.xml'):
+        data = path.read_text(encoding='utf-8')
+        new = data.replace(
+            '<androidx.preference.PreferenceScreen', '<PreferenceScreen'
+        ).replace(
+            '</androidx.preference.PreferenceScreen>', '</PreferenceScreen>'
+        )
+        if new != data:
+            path.write_text(new, encoding='utf-8')
+            changed += 1
+    if changed:
+        print(f'AIUnit: fixed PreferenceScreen root on {changed} fragment XML(s)')
+
+
+def _aiunit_patch_settings_manifest_text(data: str) -> str:
+    """Strip Settings search injection from a decoded AndroidManifest.xml."""
+    original = data
+    # Remove search / settings-switch providers entirely (order-independent).
+    data = re.sub(
+        r'\s*<provider\b[^>]*?(?:'
+        r'android:authorities="com\.oplus\.aiunit\.search"'
+        r'|android:authorities="com\.oplus\.aiunit\.authority\.settings\.switch"'
+        r'|android:name="com\.oplus\.aiunit\.settings\.search\.AIUnitSearchIndexProvider"'
+        r'|android:name="[^"]*AIUnitSettingsSwitchProvider"'
+        r')[^>]*?(?:/>|>[\s\S]*?</provider>)',
+        '',
+        data,
+        flags=re.IGNORECASE,
+    )
+    data = data.replace(
+        'android:name="ai::meta::enable_settings_ui" android:value="true"',
+        'android:name="ai::meta::enable_settings_ui" android:value="false"',
+    )
+    data = data.replace(
+        'android:name="ai::meta::enable_local_llm_settings_ui" android:value="true"',
+        'android:name="ai::meta::enable_local_llm_settings_ui" android:value="false"',
+    )
+    # De-export manufacturer settings activities so they are not IA_SETTINGS tiles.
+    for act in (
+        'com.oplus.aiunit.settings.AIUnitSettingsActivity',
+        'com.oplus.aiunit.settings.ExpAIStrengthenActivity',
+    ):
+        data = re.sub(
+            rf'(<activity\b[^>]*android:name="{re.escape(act)}"[^>]*?)'
+            r'android:exported="true"',
+            r'\1android:exported="false"',
+            data,
+        )
+    if data != original:
+        print('AIUnit: stripped Settings search/index injection from text manifest')
+    return data
+
+
+def blob_fixup_aiunit_disable_settings(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
+    """Keep AIUnit for Camera/Gallery; do not inject into system Settings / SI.
+
+    Permanent fix for Google Settings Intelligence crashes on AIUnit preference
+    XMLs (androidx.preference.PreferenceScreen root). Must never require pyaxml:
+    earlier versions returned on ImportError and left AIUnitSearchIndexProvider
+    exported, which re-broke SI after every extract.
+    """
+    if tmp_dir is None:
+        return
+
+    manifest = Path(tmp_dir) / 'AndroidManifest.xml'
+    original_manifest = Path(tmp_dir) / 'original' / 'AndroidManifest.xml'
+
+    # 1) Decoded text manifest (apktool d, with or without --no-res).
+    if manifest.exists() and manifest.read_bytes()[:1] == b'<':
+        data = manifest.read_text(encoding='utf-8')
+        new = _aiunit_patch_settings_manifest_text(data)
+        if new != data:
+            manifest.write_text(new, encoding='utf-8')
+        return
+
+    # 2) Optional binary AXML path when only original/ has the binary.
     try:
         import pyaxml
     except ImportError:
+        print('AIUnit: pyaxml unavailable and no text manifest; settings strip skipped')
         return
-    manifest = Path(tmp_dir) / 'AndroidManifest.xml'
-    # With --no-res unpack, manifest may be binary under original/ or decoded text.
-    candidates = [
-        manifest,
-        Path(tmp_dir) / 'original' / 'AndroidManifest.xml',
-    ]
-    # Prefer binary from the apk itself when unpack used --no-res leaves decoded?
+
     target = None
-    for c in candidates:
+    for c in (manifest, original_manifest):
         if c.exists() and c.stat().st_size > 0:
-            # binary AXML starts with 0x00080003 little-endian magic often
             head = c.read_bytes()[:4]
-            if head[:2] == b'\x03\x00' or head == b'\x03\x00\x08\x00' or head[0] != ord('<'):
+            if head[:2] == b'\x03\x00' or head == b'\x03\x00\x08\x00' or (
+                head and head[0] != ord('<')
+            ):
                 target = c
                 break
     if target is None:
-        # fall back: patch text manifest if present
-        if manifest.exists() and manifest.read_text(encoding='utf-8', errors='ignore').lstrip().startswith('<'):
-            data = manifest.read_text(encoding='utf-8')
-            data = data.replace(
-                'android:authorities="com.oplus.aiunit.search" android:exported="true"',
-                'android:authorities="com.oplus.aiunit.search" android:enabled="false" android:exported="false"',
-            )
-            data = data.replace(
-                'android:authorities="com.oplus.aiunit.authority.settings.switch" android:exported="true"',
-                'android:authorities="com.oplus.aiunit.authority.settings.switch" android:enabled="false" android:exported="false"',
-            )
-            data = data.replace(
-                'android:name="ai::meta::enable_settings_ui" android:value="true"',
-                'android:name="ai::meta::enable_settings_ui" android:value="false"',
-            )
-            data = data.replace(
-                'android:name="ai::meta::enable_local_llm_settings_ui" android:value="true"',
-                'android:name="ai::meta::enable_local_llm_settings_ui" android:value="false"',
-            )
-            manifest.write_text(data, encoding='utf-8')
         return
 
     axml = pyaxml.AXML.from_axml(target.read_bytes())
@@ -1512,7 +1578,7 @@ def blob_fixup_aiunit_disable_settings(ctx, file, file_path, *args, tmp_dir=None
         auth = get_a(prov, 'authorities') or ''
         name = get_a(prov, 'name') or ''
         # Must remove: OplusSearchIndexablesProvider.attachInfo requires exported,
-        # and exported providers re-inject into Settings.
+        # and exported providers re-inject into Settings / SI.
         if auth in (
             'com.oplus.aiunit.search',
             'com.oplus.aiunit.authority.settings.switch',
@@ -1550,6 +1616,7 @@ def blob_fixup_aiunit_disable_settings(ctx, file, file_path, *args, tmp_dir=None
     new = pyaxml.AXML()
     new.from_xml(root)
     target.write_bytes(new.pack())
+    print('AIUnit: stripped Settings search/index injection from binary manifest')
 
 
 def blob_fixup_aon_disable_ezpay_settings(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
@@ -1638,6 +1705,231 @@ def blob_fixup_aon_disable_ezpay_settings(ctx, file, file_path, *args, tmp_dir=N
     target.write_bytes(new.pack())
 
 
+# =====================================================================
+# Post-patch verification
+#
+# A rejected hunk already raises: patch_dir runs `git apply`, and run_cmd
+# turns a non-zero exit into ValueError. What nothing catches is the silent
+# case -- a .call() fixup whose smali anchor drifted with obfuscation finds
+# nothing, returns, and the blob ships unpatched while the extract reports
+# success. So every patch and fixup below asserts a marker in the decoded
+# tree just before it is packed. Failures are collected, not raised, so one
+# run reports every broken patch instead of stopping at the first.
+#
+# Adding a patch means adding its marker here. Pick something the patch
+# itself introduces -- a label, an injected const-string, a new class -- not
+# something that merely happens to sit near it.
+# =====================================================================
+
+VERIFY_RESULTS: List[Tuple[str, str, bool]] = []
+
+
+class Check(NamedTuple):
+    what: str
+    needle: str
+    # Basename glob (searched recursively) or a concrete path under tmp_dir.
+    where: str = '*.smali'
+    present: bool = True
+
+
+def _check_hit(root: Path, chk: Check) -> bool:
+    # Concrete path: read it. Covers binary AXML too (--no-res extracts leave
+    # AndroidManifest.xml packed), hence the utf-16 fallback for its string pool.
+    if '*' not in chk.where and '?' not in chk.where:
+        target = root / chk.where
+        if not target.is_file():
+            return False
+        raw = target.read_bytes()
+        return (
+            chk.needle.encode() in raw or chk.needle.encode('utf-16-le') in raw
+        )
+
+    try:
+        out = run_cmd([
+            'grep',
+            '-rlaF',
+            '--include',
+            chk.where,
+            '-e',
+            chk.needle,
+            str(root),
+        ])
+    except ValueError:
+        return False  # grep exits 1 when nothing matches
+
+    return bool(out.strip())
+
+
+def verify(label: str, *checks: Check):
+    def impl(ctx, file, file_path, *args, tmp_dir=None, **kwargs):
+        if tmp_dir is None:
+            return
+        root = Path(tmp_dir)
+        for chk in checks:
+            VERIFY_RESULTS.append(
+                (label, chk.what, _check_hit(root, chk) == chk.present)
+            )
+
+    return impl
+
+
+OPLUSCAMERA_CHECKS = (
+    Check(
+        '0001 default font',
+        'Landroid/graphics/Typeface;->DEFAULT:Landroid/graphics/Typeface;',
+        'smali/t7/y3.smali',
+    ),
+    Check(
+        '0002 oplus perms stripped',
+        'oplus.permission.OPLUS_COMPONENT_SAFE',
+        'AndroidManifest.xml',
+        False,
+    ),
+    Check('0003 120fps passthru', ':cond_fps120_passthru'),
+    Check('0003 8K size clamp', ':cond_8k_size_done'),
+    Check('0003 8K profile clamp', ':cond_8k_profile_done'),
+    Check('0004 gallery chooser', 'Lho/gallery_target;'),
+    Check(
+        'linker-ns extractNativeLibs=false',
+        'android:extractNativeLibs="false"',
+        'AndroidManifest.xml',
+    ),
+    Check(
+        'linker-ns CONTROL_KEYGUARD dropped',
+        'android.permission.CONTROL_KEYGUARD',
+        'AndroidManifest.xml',
+        False,
+    ),
+)
+
+GALLERY_CHECKS = (
+    Check(
+        '0001 oppo perms stripped',
+        'oppo.permission.OPPO_COMPONENT_SAFE',
+        'AndroidManifest.xml',
+        False,
+    ),
+    Check('0002 EFFECT_DOUBLE_CLICK', 'Failed to vibrate with EFFECT_DOUBLE_CLICK'),
+    Check('0003 RECEIVER_NOT_EXPORTED', ':cond_no_or'),
+    Check(
+        '0004 PhotoEditor theme items',
+        'de_toolkit_stroke_size_tint',
+        'res/values/styles.xml',
+    ),
+    Check('0005 live photo anchor', GALLERY_OLIVE_ANCHOR.strip()),
+    Check('AI feature flags forced', ':cond_force_ai_true'),
+    Check(
+        'bestTake bitmaps transient',
+        '.field private transient srcImage:Landroid/graphics/Bitmap;',
+    ),
+    Check('model endpoint pinned', GALLERY_MODEL_ENDPOINT),
+    Check(
+        'component versions raised',
+        f'<face_component_version>{GALLERY_COMPONENT_VERSIONS["face_component_version"]}</face_component_version>',
+        GALLERY_COMMON_CONFIG_ASSET,
+    ),
+)
+
+SDK_CHECKS = (
+    Check(
+        '0002 facebeauty probe path',
+        '/system_ext/lib64/libApsFaceBeautyPreviewProductJni.so',
+    ),
+    Check('0003 120fps unlock', 'video_120fps'),
+)
+
+AIUNIT_CHECKS = (
+    Check(
+        'SearchIndexablesProvider stripped',
+        'OplusSearchIndexablesProvider',
+        'AndroidManifest.xml',
+        False,
+    ),
+)
+
+AON_CHECKS = (
+    Check(
+        'ezpay SI provider stripped',
+        'IntelligentSearchIndexablesProvider',
+        'AndroidManifest.xml',
+        False,
+    ),
+)
+
+STDID_CHECKS = (
+    Check(
+        'receiver flags injected',
+        'invoke-virtual/range {v0 .. v5}, Landroid/content/Context;->registerReceiver',
+    ),
+)
+
+# Repacked archives, checked after the extract as shipped in the blob repo.
+PATCHED_BLOBS = (
+    'system_ext/priv-app/OplusCamera/OplusCamera.apk',
+    'system_ext/framework/com.oplus.camera.unit.sdk.jar',
+    'system_ext/priv-app/OppoGallery2/OppoGallery2.apk',
+    'system_ext/priv-app/AIUnit/AIUnit.apk',
+    'system_ext/priv-app/AONService/AONService.apk',
+    'system_ext/priv-app/StdID/StdID.apk',
+)
+
+
+def verify_packed_artifacts():
+    # The in-tree checks run on the decoded tree, so they still pass if
+    # apktool_pack then writes a truncated archive, or if a later re-extract
+    # overwrites the patched blob with the stock one. Read the central
+    # directory of what actually landed in the blob repo.
+    out = Path(__file__).resolve().parent / 'camera' / 'proprietary'
+    for rel in PATCHED_BLOBS:
+        name = Path(rel).name
+        target = out / rel
+        if not target.is_file():
+            VERIFY_RESULTS.append((name, 'present in blob repo', False))
+            continue
+        try:
+            with zipfile.ZipFile(target) as z:
+                names = z.namelist()
+        except (zipfile.BadZipFile, OSError):
+            VERIFY_RESULTS.append((name, 'repacked archive readable', False))
+            continue
+        VERIFY_RESULTS.append((name, 'repacked archive readable', True))
+        VERIFY_RESULTS.append((
+            name,
+            'contains dex',
+            any(n.endswith('.dex') for n in names),
+        ))
+
+
+def report_verification() -> bool:
+    if not VERIFY_RESULTS:
+        color_print('\nno patch verification ran', color=Color.RED)
+        return False
+
+    width = max(len(f'{label}: {what}') for label, what, _ in VERIFY_RESULTS)
+    failed = [r for r in VERIFY_RESULTS if not r[2]]
+
+    print('\n=== patch verification ===')
+    for label, what, ok in VERIFY_RESULTS:
+        color_print(
+            f'{label}: {what}'.ljust(width) + ('   OK' if ok else '   FAILED'),
+            color=Color.GREEN if ok else Color.RED,
+        )
+
+    if failed:
+        color_print(
+            f'\n{len(failed)} of {len(VERIFY_RESULTS)} checks FAILED -- the blobs '
+            'above shipped without the change they are supposed to carry. Re-derive '
+            'the anchor against this dump before building.',
+            color=Color.RED,
+        )
+        return False
+
+    color_print(
+        f'\nall {len(VERIFY_RESULTS)} checks passed', color=Color.GREEN
+    )
+    return True
+
+
 blob_fixups: blob_fixups_user_type = {
     # OplusCamera: keep EVERY patch under patches/ (0001 font, 0002 manifest,
     # 0003 120fps+8K clamp, 0004 gallery chooser). Expanded so we can run an
@@ -1650,10 +1942,15 @@ blob_fixups: blob_fixups_user_type = {
         .patch_dir('patches')
         .call(blob_fixup_opluscamera_ensure_8k_30_clamp)
         .call(blob_fixup_opluscamera_privapp_linker_ns)
+        .call(verify('OplusCamera', *OPLUSCAMERA_CHECKS))
         .apktool_pack()
         .stripzip(),
+    # apktool_patch() expanded so the patches can be verified before packing.
     'system_ext/framework/com.oplus.camera.unit.sdk.jar': blob_fixup()
-        .apktool_patch('patches-sdk'),
+        .apktool_unpack('patches-sdk')
+        .patch_dir('patches-sdk')
+        .call(verify('sdk.jar', *SDK_CHECKS))
+        .apktool_pack(),
     # apktool_patch() expanded so the AI feature flags can be forced after the
     # patches land but before the APK is packed back up.
     'system_ext/priv-app/OppoGallery2/OppoGallery2.apk': blob_fixup()
@@ -1663,25 +1960,32 @@ blob_fixups: blob_fixups_user_type = {
         .call(blob_fixup_gallery_besttake_bitmaps_transient)
         .call(blob_fixup_gallery_model_endpoint)
         .call(blob_fixup_gallery_component_versions)
+        .call(verify('OppoGallery2', *GALLERY_CHECKS))
         .apktool_pack()
         .stripzip(),
     'system_ext/priv-app/AIUnit/AIUnit.apk': blob_fixup()
         .call(blob_fixup_apktool_unpack_src)
+        # SI crash: must strip SearchIndexablesProvider even when pyaxml is missing.
         .call(blob_fixup_aiunit_disable_settings)
+        # Belt-and-suspenders if res/xml is present (full decode).
+        .call(blob_fixup_aiunit_si_preference_roots)
         .call(blob_fixup_aiunit_baseos_empty)
         .call(blob_fixup_aiunit_authorize_camera)
         .call(blob_fixup_aiunit_plugin_so_permissions)
         .call(blob_fixup_aiunit_preinstall_packs)
+        .call(verify('AIUnit', *AIUNIT_CHECKS))
         .apktool_pack()
         .stripzip(),
     'system_ext/priv-app/AONService/AONService.apk': blob_fixup()
         .call(blob_fixup_apktool_unpack_src)
         .call(blob_fixup_aon_disable_ezpay_settings)
+        .call(verify('AONService', *AON_CHECKS))
         .apktool_pack()
         .stripzip(),
     'system_ext/priv-app/StdID/StdID.apk': blob_fixup()
         .call(blob_fixup_apktool_unpack_src)
         .call(blob_fixup_stdid_receiver_flags)
+        .call(verify('StdID', *STDID_CHECKS))
         .apktool_pack()
         .stripzip(),
     'odm/etc/init/init.camera_process.rc': blob_fixup()
@@ -1797,3 +2101,7 @@ if __name__ == '__main__':
 
     utils = ExtractUtils.device(module)
     utils.run()
+
+    verify_packed_artifacts()
+    if not report_verification():
+        sys.exit(1)
