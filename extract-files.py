@@ -1779,9 +1779,12 @@ OPLUSCAMERA_CHECKS = (
         'Landroid/graphics/Typeface;->DEFAULT:Landroid/graphics/Typeface;',
         'smali/t7/y3.smali',
     ),
+    # The guard, not the bare name: 0002 strips android:permission= off the
+    # components, and deliberately keeps the <uses-permission> request, which
+    # is harmless ungranted. Matching the name alone hits that request too.
     Check(
-        '0002 oplus perms stripped',
-        'oplus.permission.OPLUS_COMPONENT_SAFE',
+        '0002 oplus perm guards stripped',
+        'android:permission="oplus.permission.OPLUS_COMPONENT_SAFE"',
         'AndroidManifest.xml',
         False,
     ),
@@ -1804,8 +1807,8 @@ OPLUSCAMERA_CHECKS = (
 
 GALLERY_CHECKS = (
     Check(
-        '0001 oppo perms stripped',
-        'oppo.permission.OPPO_COMPONENT_SAFE',
+        '0001 oppo perm guards stripped',
+        'android:permission="oppo.permission.OPPO_COMPONENT_SAFE"',
         'AndroidManifest.xml',
         False,
     ),
