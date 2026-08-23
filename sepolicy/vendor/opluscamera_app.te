@@ -9,7 +9,13 @@ allow opluscamera_app vendor_data_file:file { read open write create unlink geta
 allow opluscamera_app vendor_camera_update_data_file:file { read open write create unlink getattr rename setattr };
 allow opluscamera_app vendor_camera_update_data_file:dir { read open search write add_name remove_name create getattr rename setattr reparent rmdir };
 allow opluscamera_app vendor_xdsp_device:file { read open write create unlink getattr };
-allow opluscamera_app vendor_xdsp_device:chr_file { read open write create unlink getattr ioctl };
+# vendor_xdsp_device: read-only only — neverallow on SM8750 blocks write/append
+# for non-HAL domains, same restriction as vendor_qdsp_device above.
+# Removed: base sm8750 policy neverallow denies ALL chr_file access on
+# vendor_xdsp_device to any domain outside a fixed HAL/DSP-service allowlist
+# (hal_camera_default, vendor_chre, vendor_adsprpcd, etc.) — app domains like
+# opluscamera_app have zero legitimate access, even read-only.
+# allow opluscamera_app vendor_xdsp_device:chr_file { ioctl read };
 allow opluscamera_app vendor_xdsp_device:dir { read open search write add_name remove_name create getattr };
 allow opluscamera_app vendor_qdsp_device:file { read open write create unlink getattr };
 allow opluscamera_app vendor_qdsp_device:dir { read open search write add_name remove_name create getattr };
@@ -48,7 +54,9 @@ allow opluscamera_app display_service:service_manager find;
 allow opluscamera_app surfaceflinger_service:service_manager find;
 allow opluscamera_app package_native_service:service_manager find;
 allow opluscamera_app permission_service:service_manager find;
-allow opluscamera_app vendor_hal_offlinecamera_service:service_manager find;
+# Removed: neverallow restricts vendor_hal_offlinecamera_service to hal_camera
+# domains only. Offline camera access is mediated via hal_camera_default binder.
+# allow opluscamera_app vendor_hal_offlinecamera_service:service_manager find;
 allow opluscamera_app hal_system_suspend_service:service_manager find;
 dontaudit opluscamera_app vendor_hal_qspmhal_service:service_manager find;
 
@@ -59,4 +67,6 @@ allow opluscamera_app vendor_hal_qspmhal_default:binder { call transfer };
 allow cameraserver opluscamera_app:process setsched;
 
 # Allow finding the offline camera service
+# # Removed: neverallow restricts vendor_hal_offlinecamera_service to hal_camera
+# domains only. Offline camera access is mediated via hal_camera_default binder.
 # allow opluscamera_app vendor_hal_offlinecamera_service:service_manager find;
