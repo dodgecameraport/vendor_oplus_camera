@@ -1,0 +1,20 @@
+diff --git a/smali_classes12/com/oplus/camera/performance/statistics/Performance.smali b/smali_classes12/com/oplus/camera/performance/statistics/Performance.smali
+index 71aba37..47ab139 100644
+--- a/smali_classes12/com/oplus/camera/performance/statistics/Performance.smali
++++ b/smali_classes12/com/oplus/camera/performance/statistics/Performance.smali
+@@ -8725,6 +8725,7 @@
+     .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
+     .catch Ljava/lang/NoSuchFieldError; {:try_start_0 .. :try_end_0} :catch_0
+     .catch Ljava/lang/NoSuchMethodError; {:try_start_0 .. :try_end_0} :catch_0
++    .catch Ljava/lang/NoClassDefFoundError; {:try_start_0 .. :try_end_0} :catch_0
+ 
+     .line 95
+     .line 96
+@@ -9446,6 +9447,7 @@
+     .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
+     .catch Ljava/lang/NoSuchFieldError; {:try_start_0 .. :try_end_0} :catch_0
+     .catch Ljava/lang/NoSuchMethodError; {:try_start_0 .. :try_end_0} :catch_0
++    .catch Ljava/lang/NoClassDefFoundError; {:try_start_0 .. :try_end_0} :catch_0
+     .catchall {:try_start_0 .. :try_end_0} :catchall_0
+ 
+     .line 39
