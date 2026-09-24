@@ -1966,12 +1966,6 @@ blob_fixups: blob_fixups_user_type = {
         .call(verify('OppoGallery2', *GALLERY_CHECKS))
         .apktool_pack()
         .stripzip(),
-    # From system_ext these dlopens succeed and APS takes the dlsym route, whose
-    # readers still use the pre-_BASIC_ map keys (HEIF gets 0x0, buffer attach a
-    # null consumer). Stock, on /product, fails them and takes the Java route.
-    'system_ext/lib64/libAPSClient-cmd-jni.so': blob_fixup()
-        .binary_regex_replace(rb'\x00libHeifEncoderWrapper\.so\x00', b'\x00xibHeifEncoderWrapper.so\x00')
-        .binary_regex_replace(rb'\x00libNativeWinBuffExchange\.so\x00', b'\x00xibNativeWinBuffExchange.so\x00'),
     'system_ext/priv-app/AIUnit/AIUnit.apk': blob_fixup()
         .call(blob_fixup_apktool_unpack_src)
         # SI crash: must strip SearchIndexablesProvider even when pyaxml is missing.
